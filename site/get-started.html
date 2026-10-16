@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Get started — Maestro</title>
+<meta name="description" content="Build the Maestro lab on one Linux VM with make up: prerequisites, the one secret, URLs, demo credentials, scenarios, and connecting your IDE.">
+<link rel="stylesheet" href="assets/site.css">
+<script src="assets/icons.js"></script>
+<script src="assets/site.js"></script>
+</head>
+<body>
+<header id="site-header"></header>
+
+<section class="hero" style="padding-bottom:24px">
+  <div class="wrap">
+    <span class="eyebrow">Get started</span>
+    <h1>One VM, one command</h1>
+    <p class="lede">The whole fleet builds inside a KIND cluster on a single Linux VM. First build on a fresh VM takes six to twelve minutes, dominated by image pulls. Re-running <code>make up</code> when nothing changed takes under a minute.</p>
+  </div>
+</section>
+
+<section style="padding-top:10px">
+  <div class="wrap">
+    <h2>1. Prerequisites</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Item</th><th>Requirement</th></tr></thead>
+      <tbody>
+        <tr><td>Host</td><td>Linux VM, x86_64 or arm64, 8+ cores, 12+ GiB RAM (sized for 15 GiB), 30 GB free disk</td></tr>
+        <tr><td>Docker</td><td>Engine 24+ with the buildx plugin; the build user in the <code>docker</code> group</td></tr>
+        <tr><td>CLIs</td><td><code>kind</code>, <code>kubectl</code>, <code>helm</code>, <code>make</code>, <code>jq</code>, <code>curl</code>, <code>python3</code>, <code>rsync</code>. <code>make bootstrap</code> installs the missing ones.</td></tr>
+        <tr><td>Network</td><td>Outbound HTTPS to Docker Hub, quay.io, cr.agentgateway.dev, ghcr.io, PyPI and <code>api.anthropic.com</code></td></tr>
+        <tr><td>Ports</td><td>30080–30085 free on the host</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2>2. The one secret</h2>
+    <p>The Anthropic API key is the only secret. It is read at deploy time and written into a Kubernetes Secret in each namespace that runs a model loop. It is never stored in the repository or in Helm values.</p>
+<pre><code>git clone https://github.com/paimonsoror/agent-of-agents-lab.git
+cd agent-of-agents-lab
+
+mkdir -p ~/.maestro &amp;&amp; chmod 700 ~/.maestro
+echo 'ANTHROPIC_API_KEY=sk-ant-...' &gt; ~/.maestro/secrets.env &amp;&amp; chmod 600 ~/.maestro/secrets.env</code></pre>
+
+    <h2>3. Build, prove, open</h2>
+<pre><code>make up        # cluster, monitoring, images, chart, wait, smoke test
+make urls      # every URL
+make smoke     # re-run the health proof any time
+make down      # delete the cluster; make reset = down + up</code></pre>
+    <p>From a workstation you can drive a remote VM instead: <code>make remote-up VM=user@host SSH_KEY=~/.ssh/key</code> rsyncs the repository to the VM and runs <code>make up</code> there. The host IP is auto-detected; override with <code>make up HOST_IP=10.0.0.5</code> on a VM with several interfaces.</p>
+
+    <h2>4. URLs and demo credentials</h2>
+    <div class="callout warn">Every credential below is deliberately public. The lab holds no sensitive data; the console shows the same cards on hover so an audience can open any tool without hunting.</div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>What</th><th>URL</th><th>Credentials</th></tr></thead>
+      <tbody>
+        <tr><td><i data-icon="console" data-size="16"></i> Fleet Console</td><td><code>http://HOST_IP:30080</code></td><td>none</td></tr>
+        <tr><td><i data-icon="grafana" data-size="16"></i> Grafana</td><td><code>http://HOST_IP:30081</code></td><td><code>admin</code> / <code>maestro-demo</code> (anonymous Viewer also enabled)</td></tr>
+        <tr><td><i data-icon="keycloak" data-size="16"></i> Keycloak</td><td><code>http://HOST_IP:30082</code> (realm <code>maestro</code>)</td><td><code>admin</code> / <code>maestro-demo</code></td></tr>
+        <tr><td><i data-icon="gateway" data-size="16"></i> Fleet gateway</td><td><code>http://HOST_IP:30083/agents/mcp</code>, <code>/maestro/mcp</code>, admin UI at <code>/ui</code></td><td>Bearer JWT</td></tr>
+        <tr><td><i data-icon="prometheus" data-size="16"></i> Prometheus</td><td><code>http://HOST_IP:30084</code></td><td>none</td></tr>
+        <tr><td><i data-icon="edge-gateway" data-size="16"></i> Member portal via the edge</td><td><code>http://HOST_IP:30085/api/members/1001</code>, <code>/api/health</code></td><td>none</td></tr>
+      </tbody>
+    </table></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Identity</th><th>Kind</th><th>Secret / password</th><th>Roles</th></tr></thead>
+      <tbody>
+        <tr><td><code>fleet-console</code></td><td>service account (client credentials)</td><td><code>fleet-console-secret</code></td><td>all</td></tr>
+        <tr><td><code>maestro</code></td><td>service account</td><td><code>maestro-secret</code></td><td>all</td></tr>
+        <tr><td><code>engineer</code></td><td>realm user</td><td><code>engineer</code></td><td><code>maestro:ask</code>, <code>domain:apim</code>, <code>domain:cache</code></td></tr>
+        <tr><td><code>sre-lead</code></td><td>realm user</td><td><code>sre-lead</code></td><td>all</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2>5. Run the demo</h2>
+<pre><code>make scenario-apim-bad-route     # or: cache-pressure, messaging-lag — or use the console toggles
+# press "Raise P1 incident" in the console; wait ~30 s; read the assessment
+make scenario-clear
+make scenario-status</code></pre>
+    <p>The ten-minute executive walkthrough, minute by minute, is in <a href="https://github.com/paimonsoror/agent-of-agents-lab/blob/main/docs/demo-script.md" rel="noopener">docs/demo-script.md</a>.</p>
+
+    <h2 id="ide">6. Same agents, from your IDE</h2>
+<pre><code>TOKEN=$(make -s token-engineer)          # or: token-sre-lead
+claude mcp add --transport http maestro       http://HOST_IP:30083/maestro/mcp --header "Authorization: Bearer $TOKEN"
+claude mcp add --transport http domain-agents http://HOST_IP:30083/agents/mcp  --header "Authorization: Bearer $TOKEN"</code></pre>
+    <p>Tokens last eight hours. <code>engineer</code> will not see the <code>messaging_*</code> tools; <code>sre-lead</code> sees everything. Copilot and Cursor setup is in <a href="https://github.com/paimonsoror/agent-of-agents-lab/blob/main/docs/ide-setup.md" rel="noopener">docs/ide-setup.md</a>.</p>
+
+    <h2>7. Where things live</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Path</th><th>What lives there</th></tr></thead>
+      <tbody>
+        <tr><td><code>docs/architecture.md</code></td><td>The design, with diagrams. Start here.</td></tr>
+        <tr><td><code>docs/contracts.md</code></td><td>Every name, port, environment variable and JSON schema the components agree on</td></tr>
+        <tr><td><code>docs/adr/</code></td><td>Architecture Decision Records</td></tr>
+        <tr><td><code>docs/runbook.md</code></td><td>Operating it: secrets, URLs, RAM budget, troubleshooting, teardown</td></tr>
+        <tr><td><code>docs/adding-a-domain.md</code></td><td>The extension path, with messaging as the worked example</td></tr>
+        <tr><td><code>skills/</code></td><td>The SKILL.md bundles that give each agent its cognition</td></tr>
+        <tr><td><code>agents/</code></td><td>Python services: domain agents, Maestro, Fleet Console, sample member portal</td></tr>
+        <tr><td><code>deploy/</code></td><td>KIND config, Helm umbrella chart, third-party values, Keycloak realm, Grafana dashboards, scenarios</td></tr>
+        <tr><td><code>scripts/</code></td><td>The idempotent build, teardown, smoke and scenario scripts the Makefile calls</td></tr>
+        <tr><td><code>site/</code></td><td>These pages</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2>8. Adding a domain</h2>
+    <p>Write <code>skills/&lt;domain&gt;-observability/SKILL.md</code> (most of the work, and the most valuable part), add a tool module under <code>agents/domain-agent/domains/</code>, a platform plus exporter plus agent Deployment in the chart, a gateway target and authorisation rule, a realm role, a Grafana dashboard, a console node and a fault scenario. Record it in an ADR. Maestro does not change.</p>
+  </div>
+</section>
+
+<footer id="site-footer"></footer>
+</body>
+</html>

@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Architecture — Maestro</title>
+<meta name="description" content="The layers of the Maestro lab, how identity and token propagation work, why MCP now and A2A later, and how the build stays repeatable.">
+<link rel="stylesheet" href="assets/site.css">
+<script src="assets/icons.js"></script>
+<script src="assets/site.js"></script>
+</head>
+<body>
+<header id="site-header"></header>
+
+<section class="hero" style="padding-bottom:24px">
+  <div class="wrap">
+    <span class="eyebrow">Architecture</span>
+    <h1>Six layers, one gateway, one identity provider</h1>
+    <p class="lede">Agents are plumbing; the knowledge lives in skills; the gateway is the policy enforcement point; monitoring is shared. The full design is in <a href="https://github.com/paimonsoror/agent-of-agents-lab/blob/main/docs/architecture.md" rel="noopener">docs/architecture.md</a>, and every name and port is in <a href="https://github.com/paimonsoror/agent-of-agents-lab/blob/main/docs/contracts.md" rel="noopener">docs/contracts.md</a>.</p>
+  </div>
+</section>
+
+<section style="padding-top:10px">
+  <div class="wrap">
+    <div class="layers">
+      <div class="layer reveal"><div class="name">Consumers<small>who asks</small></div><div class="chips"><span class="chip"><i data-icon="console"></i>Fleet Console · incident intake</span><span class="chip"><i data-icon="ide"></i>Engineer in IDE · MCP client</span></div></div>
+      <div class="layer reveal d1"><div class="name">Orchestration<small>the agent of agents</small></div><div class="chips"><span class="chip"><i data-icon="maestro"></i>Maestro · Claude Opus 5.5, high effort</span><span class="chip"><i data-icon="skills"></i>maestro-orchestration skill</span></div></div>
+      <div class="layer reveal d2"><div class="name">Fleet gateway<small>policy enforcement</small></div><div class="chips"><span class="chip"><i data-icon="gateway"></i>agentgateway · JWT validation · per-tool RBAC (CEL) · metrics · audit</span></div></div>
+      <div class="layer reveal d3"><div class="name">Domain agents<small>one per technology domain</small></div><div class="chips"><span class="chip"><i data-icon="agent"></i>apim-agent</span><span class="chip"><i data-icon="agent"></i>cache-agent</span><span class="chip"><i data-icon="agent"></i>messaging-agent</span><span class="chip"><i data-icon="claude"></i>Claude Sonnet 5.5, medium effort</span></div></div>
+      <div class="layer reveal d4"><div class="name">Domain platforms<small>what the agents watch</small></div><div class="chips"><span class="chip"><i data-icon="edge-gateway"></i>Edge gateway (agentgateway)</span><span class="chip"><i data-icon="valkey"></i>Valkey + redis_exporter</span><span class="chip"><i data-icon="apachekafka"></i>Kafka + kafka-exporter</span><span class="chip"><i data-icon="portal"></i>Member portal sample app</span></div></div>
+      <div class="layer reveal d4"><div class="name">Shared services<small>everyone sends here</small></div><div class="chips"><span class="chip"><i data-icon="prometheus"></i>Prometheus</span><span class="chip"><i data-icon="grafana"></i>Grafana · one dashboard per domain</span><span class="chip"><i data-icon="keycloak"></i>Keycloak · realm <code>maestro</code></span></div></div>
+    </div>
+  </div>
+</section>
+
+<section id="identity">
+  <div class="wrap">
+    <span class="eyebrow">Identity and trust</span>
+    <h2>Token propagation, not token minting</h2>
+    <div class="split">
+      <div>
+        <p>Every service that calls another presents a JWT issued by Keycloak. Services are OAuth clients with service accounts (non-human identities); engineers are realm users. Roles live in <code>realm_access.roles</code>.</p>
+        <p><b>Maestro forwards the caller's token</b> to the domain agents. It never mints its own for downstream calls, so authorisation is end-to-end per caller and Maestro cannot escalate on anyone's behalf. Non-human identity stays in one place (Keycloak) with one mechanism (JWT). That is the explicit reason the lab starts with MCP rather than A2A.</p>
+        <p>The gateway is the policy enforcement point: JWT validation against Keycloak's JWKS, tool-level RBAC, metrics, audit. Domain agents verify the same token again, so bypassing the gateway buys nothing.</p>
+        <p class="muted"><a href="decisions.html">ADR-0005</a> · <a href="decisions.html">ADR-0004</a></p>
+      </div>
+      <div class="token-stage reveal">
+        <div class="hops" id="hops">
+          <div class="hop" data-h="0"><i data-icon="console"></i><br>Fleet Console<small>obtains JWT</small></div>
+          <div class="hop" data-h="1"><i data-icon="maestro"></i><br>Maestro<small>forwards it</small></div>
+          <div class="hop" data-h="2"><i data-icon="gateway"></i><br>Gateway<small>validates · authorises</small></div>
+          <div class="hop" data-h="3"><i data-icon="agent"></i><br>Domain agent<small>verifies again</small></div>
+          <span class="jwt" id="jwt">eyJhbGciOi… JWT</span>
+        </div>
+        <div class="claims" id="claims">{
+  "iss": "http://&lt;host&gt;:30082/realms/maestro",
+  "aud": "maestro-gateway",
+  "sub": "service-account-fleet-console",
+  "realm_access": { "roles": [ "maestro:ask",
+     "domain:apim", "domain:cache", "domain:messaging" ] },
+  "exp": "+8h"
+}</div>
+        <p class="muted" style="margin:10px 0 0;font-size:.82rem" id="hop-note">The same token, unchanged, at every hop.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="rbac">
+  <div class="wrap">
+    <span class="eyebrow">Tool-level RBAC at the gateway</span>
+    <h2>You cannot ask for what you cannot see</h2>
+    <p class="lede">When Maestro lists tools on behalf of a caller, the gateway evaluates one CEL rule per tool. Pick a caller to see what the gateway returns.</p>
+    <div class="stage-controls">
+      <div class="toggle" role="group" aria-label="Caller">
+        <button class="on" data-who="sre">sre-lead · all roles</button>
+        <button data-who="console">fleet-console · all roles</button>
+        <button data-who="eng">engineer · no domain:messaging</button>
+      </div>
+    </div>
+    <div class="tools" id="tools">
+      <div class="tool" data-d="apim">apim_assess</div><div class="tool" data-d="apim">apim_health</div>
+      <div class="tool" data-d="cache">cache_assess</div><div class="tool" data-d="cache">cache_health</div>
+      <div class="tool" data-d="messaging">messaging_assess</div><div class="tool" data-d="messaging">messaging_health</div>
+    </div>
+<pre><code>mcpAuthorization:
+  rules:
+    - 'mcp.tool.target == "apim"      &amp;&amp; "domain:apim"      in jwt.realm_access.roles'
+    - 'mcp.tool.target == "cache"     &amp;&amp; "domain:cache"     in jwt.realm_access.roles'
+    - 'mcp.tool.target == "messaging" &amp;&amp; "domain:messaging" in jwt.realm_access.roles'</code></pre>
+    <p class="muted">The smoke test proves this on every build: <code>engineer</code> must not see <code>messaging_assess</code>, and <code>sre-lead</code> must.</p>
+  </div>
+</section>
+
+<section id="monitoring">
+  <div class="wrap">
+    <span class="eyebrow">Shared monitoring</span>
+    <h2>Expert knowledge of what to look for</h2>
+    <div class="cards">
+      <div class="card reveal"><h3><i data-icon="prometheus" data-size="22"></i>Everything exports natively</h3><p>Prometheus (kube-prometheus-stack) scrapes both gateways, Valkey's and Kafka's exporters, the sample application and the agents themselves. No synthetic metrics: the faults are real, so the signals are real.</p></div>
+      <div class="card reveal d1"><h3><i data-icon="grafana" data-size="22"></i>One dashboard per domain</h3><p>Grafana is provisioned with a fleet overview plus <code>domain-apim</code>, <code>domain-cache</code>, <code>domain-messaging</code> and the member portal. Agents cite panels by deep link so a responder opens exactly what the agent read.</p></div>
+      <div class="card reveal d2"><h3><i data-icon="skills" data-size="22"></i>The skill knows the panel</h3><p>Each domain's SKILL.md documents the panel-by-panel reading of its dashboard, the PromQL for each failure mode, and what "implicated" means for that domain. That is the "expert knowledge of the monitoring tool" an enterprise agent must carry.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="a2a">
+  <div class="wrap">
+    <span class="eyebrow">North star</span>
+    <h2>MCP with JWT today, A2A when identity is ready</h2>
+    <div class="split">
+      <div class="card reveal"><h3>Why MCP now</h3><p>MCP needs nothing beyond a bearer token on each call. The same JWT the consumer already holds authorises every hop, and one gateway policy filters tools per caller. There is no agent card to sign, no task lifecycle to secure, no second identity model to run.</p></div>
+      <div class="card reveal d1"><h3>What changes for A2A</h3><p>agentgateway already routes A2A. When agent cards and long-running task lifecycles are needed, the migration is a routing policy on the same gateway, the same JWT rules, and one adapter per agent. Maestro's consolidation logic does not change. Recorded in ADR-0004.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="repeatability">
+  <div class="wrap">
+    <span class="eyebrow">Repeatability</span>
+    <h2>One idempotent <code>make up</code>, one destructive <code>make down</code></h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Step</th><th>What it does</th><th>When already done</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>Raise inotify limits (KIND, Prometheus and Kafka need them)</td><td>no-op</td></tr>
+        <tr><td>2</td><td><code>kind create cluster --name maestro</code> with fixed host-port mappings 30080–30085</td><td>skipped if present</td></tr>
+        <tr><td>3</td><td>Install or upgrade kube-prometheus-stack into <code>maestro-monitoring</code></td><td>Helm converges</td></tr>
+        <tr><td>4</td><td>Validate <code>skills/</code>; build four first-party images tagged by content hash; load into KIND</td><td>unchanged inputs ⇒ no rebuild, no reload</td></tr>
+        <tr><td>5</td><td>Install or upgrade the <code>maestro</code> umbrella chart with host IP, image tags, realm, dashboards</td><td>Helm converges</td></tr>
+        <tr><td>6</td><td>Wait for every Deployment, in dependency order; clear any fault scenario</td><td>immediate</td></tr>
+        <tr><td>7</td><td>Smoke test: identity, gateway RBAC filtering, Prometheus targets, health, edge; print URLs</td><td>under a minute</td></tr>
+      </tbody>
+    </table></div>
+    <p class="muted">Nothing depends on state outside the repository except the secrets file and Docker's image cache. <a href="decisions.html">ADR-0012</a>.</p>
+  </div>
+</section>
+
+<footer id="site-footer"></footer>
+
+<script>
+(function () {
+  // Token hop animation
+  const hops = Array.from(document.querySelectorAll(".hop")), jwt = document.getElementById("jwt"), note = document.getElementById("hop-note");
+  const NOTES = ["The console obtains the token with its own client credentials.", "Maestro forwards the caller's token. It never mints one.", "The gateway checks iss, aud, exp against Keycloak's JWKS, then the CEL rule for the tool.", "The agent verifies the same token again and logs who asked."];
+  let h = 0;
+  function place() {
+    hops.forEach((e, i) => e.classList.toggle("lit", i === h));
+    const r = hops[h].getBoundingClientRect(), p = hops[h].parentElement.getBoundingClientRect();
+    jwt.style.left = (r.left - p.left + r.width / 2) + "px";
+    note.textContent = NOTES[h];
+  }
+  place();
+  setInterval(() => { h = (h + 1) % hops.length; place(); }, 1800);
+  window.addEventListener("resize", place);
+
+  // RBAC tool filter
+  const ROLES = { sre: ["apim", "cache", "messaging"], console: ["apim", "cache", "messaging"], eng: ["apim", "cache"] };
+  document.querySelectorAll("[data-who]").forEach(b => b.addEventListener("click", () => {
+    document.querySelectorAll("[data-who]").forEach(x => x.classList.remove("on")); b.classList.add("on");
+    const allowed = ROLES[b.dataset.who];
+    document.querySelectorAll(".tool").forEach(t => t.classList.toggle("hidden-by-gateway", !allowed.includes(t.dataset.d)));
+  }));
+})();
+</script>
+</body>
+</html>

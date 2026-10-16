@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How it works — Maestro</title>
+<meta name="description" content="Step through a real P1 incident: identity, orchestration, gateway RBAC, fan-out, evidence, findings and the consolidated assessment.">
+<link rel="stylesheet" href="assets/site.css">
+<script src="assets/icons.js"></script>
+<script src="assets/site.js"></script>
+<script src="assets/topology.js"></script>
+</head>
+<body>
+<header id="site-header"></header>
+
+<section class="hero" style="padding-bottom:20px">
+  <div class="wrap">
+    <span class="eyebrow">Walkthrough</span>
+    <h1>A request, end to end</h1>
+    <p class="lede">This is the exact path a P1 takes through the lab, with the words taken from a real trace. Step through it, or let it play. Switch the caller to see what changes when an engineer with fewer roles asks the same question from their IDE.</p>
+  </div>
+</section>
+
+<section style="padding-top:10px">
+  <div class="wrap">
+    <div class="stage-controls">
+      <button class="btn small primary" id="play">▶ Play</button>
+      <button class="btn small" id="prev">← Back</button>
+      <button class="btn small" id="next">Next →</button>
+      <span class="spacer"></span>
+      <span class="muted" style="font-size:.85rem">Caller:</span>
+      <div class="toggle" role="group" aria-label="Caller">
+        <button class="on" data-caller="console">Fleet Console · all roles</button>
+        <button data-caller="ide">engineer · no domain:messaging</button>
+      </div>
+    </div>
+    <div class="progress"><i id="bar"></i></div>
+    <div class="steps" id="steps"></div>
+    <div class="walk">
+      <div class="stage" id="stage"></div>
+      <div class="narrative" id="narrative"></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <span class="eyebrow">What travels on the wire</span>
+    <h2>Every hop is an MCP call carrying the caller's JWT</h2>
+    <div class="split">
+      <div class="card reveal">
+        <h3><i data-icon="gateway" data-size="20"></i>Maestro → apim_assess, via the fleet gateway</h3>
+        <p>Maestro composes its own question for each agent, adding the context it has. The gateway authorises the hop with a CEL rule, then passes the token through unchanged.</p>
+<pre><code>MCP tools/call · Streamable HTTP
+endpoint   http://agent-gateway.maestro-gateway:4000/agents/mcp
+target     apim-agent  (tool apim_assess)
+rule       mcp.tool.target == "apim" &amp;&amp;
+           "domain:apim" in jwt.realm_access.roles
+auth       Bearer &lt;caller's JWT&gt;  (propagated, never re-minted)
+           sub=service-account-fleet-console
+           roles=[maestro:ask, domain:apim, domain:cache, domain:messaging]
+trace_id   trc-20261016-040020-8a1f</code></pre>
+      </div>
+      <div class="card reveal d1">
+        <h3><i data-icon="agent" data-size="20"></i>What comes back: a structured finding</h3>
+        <p>Every domain agent returns the same shape (ADR-0008), so Maestro can consolidate without knowing anything about Valkey or Kafka.</p>
+<pre><code>{
+  "domain": "apim",
+  "implicated": true,
+  "confidence": 0.88,
+  "summary": "5xx ratio on edge-gateway rose to ~100%
+              for /api/members at 03:58:50 UTC, minutes
+              after change CHG0123 repointed the route
+              to portal-api-v2 (no such service).",
+  "evidence": [
+    { "kind": "promql", "query": "sum(rate(agentgateway_requests_total{status=~\"5..\"}[5m]))", "value": "0.97" },
+    { "kind": "change", "id": "CHG0123", "by": "platform-apim-bot" },
+    { "kind": "grafana", "url": "http://&lt;host&gt;:30081/d/domain-apim?viewPanel=2" }
+  ],
+  "recommended_actions": ["Roll back CHG0123 on edge-gateway-config"]
+}</code></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer id="site-footer"></footer>
+
+<script>
+(function () {
+  const stage = document.getElementById("stage"), nar = document.getElementById("narrative");
+  const stepsEl = document.getElementById("steps"), bar = document.getElementById("bar");
+  const t = MaestroTopology.render(stage, {});
+  let caller = "console", idx = -1, playing = false, run = 0;
+  const L = (cls, s) => `<div class="${cls || ""}">${s}</div>`;
+
+  const STEPS = (c) => {
+    const ide = c === "ide";
+    const who = ide ? "engineer (realm user)" : "fleet-console (service account)";
+    const roles = ide ? "maestro:ask, domain:apim, domain:cache" : "maestro:ask, domain:apim, domain:cache, domain:messaging";
+    return [
+      { who: ide ? "Engineer in IDE" : "Fleet Console", title: "The caller gets an identity",
+        text: ide
+          ? "An engineer in Claude Code asks: \"Is the member portal healthy right now?\" Their IDE holds a token for the realm user <code>engineer</code>, obtained from Keycloak. It carries the roles they were given, and nothing more."
+          : "An operator presses <b>Raise P1 incident</b>: \"Member portal API returning 503s\". Before asking anyone, the console obtains its own identity: a JWT from Keycloak for the non-human identity <code>fleet-console</code>, via the client-credentials grant. No shared secrets between agents, ever.",
+        log: [L("", `<span class="k">token.issued</span>  ${who}`), L("dim", `roles=[${roles}]  aud=maestro-gateway  exp=+8h`), L("", `<span class="k">trace</span>  trc-20261016-040020-8a1f`)] },
+      { who: "Maestro", title: "Maestro receives the question",
+        text: "Maestro (Claude Opus 5.5, high effort) receives the question together with the caller's JWT. It loads <code>skills/maestro-orchestration/SKILL.md</code>: triage heuristics, how to decide which domains matter, how to score and consolidate, how to write for a responder. The skill is Markdown a human maintains, cached in the model's system prompt.",
+        log: [L("", `<span class="k">request.received</span>  "${ide ? "Is the member portal healthy right now?" : "Member portal API returning 503s"}"`), L("dim", `caller sub=${ide ? "engineer" : "service-account-fleet-console"}`), L("", `<span class="k">skills.loaded</span>  maestro-orchestration (1 skill, 3 references available)`)] },
+      { who: "Fleet gateway", title: "What am I allowed to call?",
+        text: `Maestro connects to the fleet gateway's MCP endpoint <b>with the caller's token</b> and asks for the tool list. agentgateway validates the JWT against Keycloak's JWKS (issuer, audience, expiry), then evaluates a CEL rule per tool. ${ide ? "The engineer lacks <code>domain:messaging</code>, so the gateway simply does not return the messaging tools. Maestro cannot ask for what it cannot see." : "The console's identity holds all three domain roles, so all six tools come back."}`,
+        log: [L("", `<span class="k">tools.discovered</span>  ${ide ? 4 : 6} tools`), L("dim", `apim_assess  apim_health  cache_assess  cache_health${ide ? "" : "  messaging_assess  messaging_health"}`), ...(ide ? [L("bad", `hidden by gateway: messaging_* (caller lacks domain:messaging)`)] : [])] },
+      { who: "Maestro → agents", title: "Fan-out, in parallel",
+        text: `Maestro reasons about which domains could explain the symptom and calls their <code>assess</code> tools at once, each with a question it composed itself: "${ide ? "Is the member portal healthy? Check your platform and the shared monitoring for the last 30 minutes." : "Member portal routes returning 503 at the edge since ~03:50 UTC. Is your domain implicated?"}" The gateway authorises each hop and passes the same token through.`,
+        log: [L("", `<span class="k">request.sent</span>  apim_assess       via fleet gateway`), L("", `<span class="k">request.sent</span>  cache_assess      via fleet gateway`), ide ? L("dim", `messaging: not consulted (no tool visible)`) : L("", `<span class="k">request.sent</span>  messaging_assess  via fleet gateway`)] },
+      { who: "Domain agents", title: "Evidence, from the platform and from Prometheus",
+        text: "Each agent (Claude Sonnet 5.5) verifies the JWT again, loads its domain skill plus the shared Prometheus skill, and runs its own tool loop. Platform-native tools read the edge gateway's route config and change annotations, Valkey's <code>INFO</code>, Kafka consumer-group lag. PromQL turns a signal into evidence, with a Grafana deep link to the panel it read.",
+        log: [L("", `<span class="k">evidence.gathered</span>  apim   edge route /api/members → portal-api-v2 (no such service)`), L("dim", `apim   change-id=CHG0123 by platform-apim-bot at 03:58:50Z`), L("dim", `apim   sum(rate(agentgateway_requests_total{status=~"5.."}[5m])) = 0.97`), L("", `<span class="k">evidence.gathered</span>  cache  hit ratio 0.93, evictions 0, used_memory 11 MiB / 64 MiB`), ...(ide ? [] : [L("", `<span class="k">evidence.gathered</span>  messaging  lag(portal-consumer)=0, consumer active`)])] },
+      { who: "Agents → Maestro", title: "Findings come back",
+        text: "Every agent returns the same structured finding: implicated or not, a confidence score, the evidence it used, recommended actions. A \"cleared\" verdict is a real answer: the agent had to prove its platform is fine.",
+        log: [L("bad", `finding.returned  apim       implicated  0.88`), L("ok", `finding.returned  cache      cleared     0.85`), ide ? L("dim", `messaging  not_consulted: caller lacks role domain:messaging`) : L("ok", `finding.returned  messaging  cleared     0.92`)] },
+      { who: "Maestro → caller", title: "One assessment",
+        text: "Maestro consolidates: which domains are implicated, which are cleared, which could not be consulted and why, and the single next step for the human. It posts the assessment to the console and returns it to the IDE.",
+        log: [L("", `<span class="k">assessment.posted</span>`), L("", `"APIM is the cause, at 0.88 confidence. Change CHG0123 went live at 03:58:50 UTC and repointed /api/members to a backend that does not exist."`), L("ok", `next_step: Roll back CHG0123 on the edge gateway (ConfigMap edge-gateway-config).`), ...(ide ? [L("dim", `not_consulted: messaging — caller lacks role domain:messaging`)] : [])] },
+      { who: "Human", title: "The human decides",
+        text: "Maestro recommends; it never remediates (ADR-0008). The responder opens the Grafana panel the agent cited, confirms, and rolls the change back. Minutes, not hours, and the agent read the change record itself.",
+        log: [L("dim", `assessment delivered in 33 s · 4 model loops · ≈ $0.20`), L("", `<span class="k">evidence</span>  http://&lt;host&gt;:30081/d/domain-apim?viewPanel=2`)] },
+    ];
+  };
+
+  function renderSteps() {
+    const S = STEPS(caller);
+    stepsEl.innerHTML = S.map((s, i) => `<button data-i="${i}" class="${i === idx ? "current" : i < idx ? "done" : ""}">${i + 1}</button>`).join("");
+    stepsEl.querySelectorAll("button").forEach(b => b.addEventListener("click", () => goto(+b.dataset.i)));
+    bar.style.width = `${((idx + 1) / S.length) * 100}%`;
+  }
+  function show(i) {
+    const s = STEPS(caller)[i];
+    nar.innerHTML = `<div class="who">${s.who}</div><h3>${i + 1}. ${s.title}</h3><p>${s.text}</p><div class="log">${s.log.join("")}</div>`;
+    idx = i; renderSteps();
+  }
+
+  // Replay the sequence from the start, fast-forwarding earlier steps, and stop once
+  // step `until` has fully animated (the next step's callback aborts the run).
+  async function animateTo(until) {
+    const my = ++run;
+    playing = until === Infinity;
+    await MaestroTopology.runIncident(t, {
+      caller, holdMs: 0,
+      onStep: (i) => {
+        if (my !== run || i > until) throw new Error("stop");
+        t.speed = i < until ? 0.2 : 1;
+        show(i);
+      },
+    }).catch(() => {});
+    t.speed = 1;
+    if (my === run && until === Infinity) { playing = false; document.getElementById("play").textContent = "▶ Play"; }
+  }
+  function goto(i) { animateTo(i); }
+  document.getElementById("next").addEventListener("click", () => goto(Math.min(idx + 1, 7)));
+  document.getElementById("prev").addEventListener("click", () => goto(Math.max(idx - 1, 0)));
+  document.getElementById("play").addEventListener("click", (e) => {
+    if (playing) { run++; playing = false; e.target.textContent = "▶ Play"; return; }
+    e.target.textContent = "■ Stop"; animateTo(Infinity);
+  });
+  document.querySelectorAll(".toggle [data-caller]").forEach(b => b.addEventListener("click", () => {
+    document.querySelectorAll(".toggle [data-caller]").forEach(x => x.classList.remove("on")); b.classList.add("on");
+    caller = b.dataset.caller; run++; playing = false; document.getElementById("play").textContent = "▶ Play"; goto(Math.max(idx, 0));
+  }));
+  goto(0);
+})();
+</script>
+</body>
+</html>

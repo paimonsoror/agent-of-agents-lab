@@ -22,6 +22,7 @@ supersedes the old one and link both ways.
 | [0011](0011-fault-injection-scenarios.md) | Each domain ships a reversible fault scenario | Accepted |
 | [0012](0012-idempotent-build.md) | One idempotent `make up`; one destructive `make down` | Accepted |
 | [0013](0013-domain-platform-stand-ins.md) | Open-source stand-ins for the domain platforms | Accepted |
+| [0014](0014-github-pages-site.md) | A static GitHub Pages site explains the lab | Accepted |
 
 ## Template
 

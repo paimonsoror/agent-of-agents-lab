@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fleet Console — Maestro</title>
+<meta name="description" content="The executive-facing console: live topology, play-by-play for every layer, scenario toggles, credential cards, and replay.">
+<link rel="stylesheet" href="assets/site.css">
+<script src="assets/icons.js"></script>
+<script src="assets/site.js"></script>
+<script src="assets/topology.js"></script>
+</head>
+<body>
+<header id="site-header"></header>
+
+<section class="hero" style="padding-bottom:24px">
+  <div class="wrap">
+    <span class="eyebrow">Fleet Console</span>
+    <h1>Watch the system think</h1>
+    <p class="lede">Every component emits events to the console's hub as it works: <code>request.received</code>, <code>skills.loaded</code>, <code>evidence.gathered</code>, <code>finding.returned</code>, <code>assessment.posted</code>. The console animates them on the topology live, keeps a timeline, and lets anyone click a box for the play-by-play of that layer.</p>
+  </div>
+</section>
+
+<section style="padding-top:10px">
+  <div class="wrap">
+    <p class="muted">A faithful mock of the console. Press <b>Raise P1 incident</b>, then click <b>Maestro</b> or any agent to open its play-by-play.</p>
+    <div class="console-mock reveal">
+      <div class="bar"><i></i><i></i><i></i><span style="margin-left:6px">Fleet Console · http://&lt;host&gt;:30080</span><span class="spacer" style="flex:1"></span>
+        <span class="cred" tabindex="0">${grafana}<span class="card-pop"><div><span>URL</span><code>http://&lt;host&gt;:30081</code></div><div><span>user</span><code>admin</code></div><div><span>password</span><code>maestro-demo</code></div></span></span>
+        <span class="cred" tabindex="0">${keycloak}<span class="card-pop"><div><span>URL</span><code>http://&lt;host&gt;:30082</code></div><div><span>admin</span><code>admin / maestro-demo</code></div><div><span>engineer</span><code>engineer / engineer</code></div><div><span>sre-lead</span><code>sre-lead / sre-lead</code></div></span></span>
+        <span class="cred" tabindex="0">${prometheus}<span class="card-pop"><div><span>URL</span><code>http://&lt;host&gt;:30084</code></div><div><span>auth</span><code>none</code></div></span></span>
+        <button class="btn small primary" id="raise">⚠ Raise P1 incident</button>
+      </div>
+      <div class="body">
+        <div class="stage" id="stage" style="border:0;border-radius:0"></div>
+        <div class="drawer" id="drawer"><h4>Play-by-play</h4><p class="muted">Raise an incident, then click a box.</p></div>
+      </div>
+    </div>
+    <p class="muted" style="margin-top:10px;font-size:.85rem">Hover the Grafana, Keycloak and Prometheus marks in the bar: the real console shows the same credential cards, sourced from the chart's <code>demo:</code> values. Every demo credential is deliberately public.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <span class="eyebrow">What the console gives an audience</span>
+    <h2>Transparency into every layer</h2>
+    <div class="cards">
+      <div class="card reveal"><h3>Play-by-play drawer</h3><p>Click any box for that layer's narrative of the current trace in plain language: the verbatim question, who asked (subject and roles), the skill loaded, the tools discovered, each model turn with token counts, the exact question Maestro composed for each agent, and a transport block showing the MCP call, endpoint, the gateway rule that authorised it, and the caller's claims.</p></div>
+      <div class="card reveal d1"><h3>Live topology with product marks</h3><p>Real icons for Grafana, Prometheus, Kafka and Keycloak (Simple Icons, CC0, embedded inline so offline labs work), neutral glyphs for the rest, and a small Claude badge on Maestro and each agent. Edges light as packets travel; agents turn red when implicated and green when cleared.</p></div>
+      <div class="card reveal d2"><h3>Scenario toggles</h3><p>Apply and clear the three faults from the UI. The console performs exactly the same Kubernetes operations as <code>scripts/scenario.sh</code>, and derives the active state from the cluster so it is always truthful.</p></div>
+      <div class="card reveal d3"><h3>Ask Maestro, raise an incident</h3><p>Free-text questions through <code>/api/ask</code>, or a one-click P1 that stands in for ServiceNow. The console authenticates as its own non-human identity, <code>fleet-console</code>, so every trace carries a real caller.</p></div>
+      <div class="card reveal"><h3>Timeline and replay</h3><p>The hub keeps the last 200 events in a ring buffer and streams them over SSE. Replay controls re-animate the last trace, which is the fallback when the model API is slow mid-demo.</p></div>
+      <div class="card reveal d1"><h3>How it works, in-app</h3><p>A "How it works" guide gives first-time viewers the eight-step story, each step linking to its box on the topology.</p></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <span class="eyebrow">Event model</span>
+    <h2>One schema from every component</h2>
+    <div class="split">
+      <div>
+        <p>Components emit JSON events to <code>POST /api/events</code>; the console fans them out on <code>GET /api/stream</code>. Each carries a trace id, a source, a kind, a one-line summary, the edge it travelled, and detail for the drawer. Maestro and the agents stay unaware of the UI: they just emit.</p>
+        <p class="muted">ADR-0009. The full schema is in <code>docs/contracts.md</code>.</p>
+      </div>
+<pre><code>{
+  "ts": "2026-10-16T04:00:21.118Z",
+  "trace_id": "trc-20261016-040020-8a1f",
+  "source": "maestro",
+  "kind": "request.sent",
+  "summary": "apim_assess via fleet gateway",
+  "edge": { "from": "maestro", "to": "apim-agent" },
+  "detail": {
+    "question": "Member portal routes returning 503 …",
+    "transport": { "protocol": "MCP tools/call · Streamable HTTP",
+      "gateway_rule": "\"domain:apim\" in jwt.realm_access.roles",
+      "auth": { "scheme": "Bearer (propagated)", "sub": "service-account-fleet-console" } }
+  }
+}</code></pre>
+    </div>
+  </div>
+</section>
+
+<footer id="site-footer"></footer>
+
+<script>
+(function () {
+  // Fill in the bar icons
+  const bar = document.querySelector(".console-mock .bar");
+  bar.innerHTML = bar.innerHTML.replace("${grafana}", MaestroIcons.svg("grafana", 18)).replace("${keycloak}", MaestroIcons.svg("keycloak", 18)).replace("${prometheus}", MaestroIcons.svg("prometheus", 18));
+  const t = MaestroTopology.render(document.getElementById("stage"), { focusable: true });
+  const drawer = document.getElementById("drawer");
+  let ran = false, running = false;
+  const PLAY = {
+    maestro: ["Maestro", ["<b>Asked:</b> \"Member portal API returning 503s\" by service-account-fleet-console (roles maestro:ask, domain:apim, domain:cache, domain:messaging)", "<b>Loaded</b> skill maestro-orchestration", "<b>Discovered</b> 6 tools via the fleet gateway", "<b>Turn 1</b> (Opus 5.5): 2,814 in · 412 out → call apim_assess, cache_assess, messaging_assess in parallel", "<b>→ apim_assess</b> via the fleet gateway: \"Member portal routes returning 503 at the edge since ~03:50 UTC. Is your domain implicated?\"", "<b>Transport:</b> MCP tools/call · Bearer (propagated) · rule \"domain:apim\" in jwt.realm_access.roles", "<b>Findings:</b> apim implicated 0.88 · cache cleared 0.85 · messaging cleared 0.92", "<b>Turn 2:</b> consolidate → assessment posted in 33 s"]],
+    "apim-agent": ["apim-agent", ["<b>Verified</b> caller JWT (sub service-account-fleet-console)", "<b>Loaded</b> apim-observability + prometheus-observability", "<b>prometheus_query</b> 5xx ratio on edge-gateway = 0.97", "<b>edge_route_config</b> /api/members → portal-api-v2 (no such service)", "<b>read_reference</b> change-annotations.md", "<b>edge_change_annotations</b> CHG0123 by platform-apim-bot at 03:58:50Z", "<b>Finding:</b> implicated 0.88 · roll back CHG0123 · Grafana domain-apim panel 2"]],
+    "cache-agent": ["cache-agent", ["<b>Verified</b> caller JWT", "<b>Loaded</b> cache-observability + prometheus-observability", "<b>valkey_info</b> used_memory 11 MiB / 64 MiB · evicted_keys 0", "<b>prometheus_query</b> hit ratio 0.93 over 15 m", "<b>Finding:</b> cleared 0.85"]],
+    "messaging-agent": ["messaging-agent", ["<b>Verified</b> caller JWT", "<b>Loaded</b> messaging-observability + prometheus-observability", "<b>kafka_consumer_groups</b> portal-consumer: 1 member, lag 0", "<b>prometheus_query</b> kafka_consumergroup_lag = 0", "<b>Finding:</b> cleared 0.92"]],
+    gateway: ["Fleet gateway", ["<b>tools/list</b> for sub service-account-fleet-console → 6 tools (all CEL rules matched)", "<b>tools/call</b> apim_assess → apim-agent · authorised · token passed through", "<b>tools/call</b> cache_assess → cache-agent · authorised", "<b>tools/call</b> messaging_assess → messaging-agent · authorised", "<b>Metrics</b> exported to Prometheus on :15020"]],
+    keycloak: ["Keycloak", ["<b>token.issued</b> client fleet-console (client-credentials) · aud maestro-gateway · 8 h", "<b>JWKS</b> served to the fleet gateway and every agent for verification"]],
+    console: ["Fleet Console", ["<b>incident.raised</b> P1 INC-1002 \"Member portal API returning 503s\"", "<b>token.issued</b> for fleet-console", "<b>assessment.received</b> after 33 s: \"APIM is the cause, at 0.88 confidence…\""]],
+    prometheus: ["Prometheus", ["<b>apim-agent</b> asked: 5xx ratio on edge-gateway (5 m rate)", "<b>cache-agent</b> asked: keyspace hit ratio, evictions", "<b>messaging-agent</b> asked: consumer-group lag for portal-consumer"]],
+    edge: ["Edge gateway", ["<b>apim-agent</b> read the route config and change annotations", "Route /api/members currently → portal-api-v2.member-portal:8000"]],
+    valkey: ["Valkey", ["<b>cache-agent</b> ran INFO memory, INFO stats and sampled keys"]],
+    kafka: ["Kafka", ["<b>messaging-agent</b> described consumer group portal-consumer and topic member.events"]],
+    skills: ["skills/", ["Loaded by Maestro: maestro-orchestration", "Loaded by each agent: its domain skill + prometheus-observability", "References read on demand: change-annotations.md, dashboard-panels.md"]],
+    grafana: ["Grafana", ["Cited in evidence: domain-apim panel 2 (5xx ratio), domain-cache panel 3, domain-messaging panel 1"]],
+    ide: ["Engineer in IDE", ["Idle in this trace. From Claude Code the same flow starts here with the engineer's own token."]],
+  };
+  function open(id) {
+    const p = PLAY[id]; if (!p) return;
+    if (!ran) { drawer.innerHTML = `<h4>${MaestroIcons.svg(MaestroIcons.NODE_ICON[id] || "agent", 18)} ${p[0]}</h4><p class="muted">No trace yet. Raise an incident first.</p>`; return; }
+    drawer.innerHTML = `<h4>${MaestroIcons.svg(MaestroIcons.NODE_ICON[id] || "agent", 18)} ${p[0]} · play-by-play</h4><ol>${p[1].map((s, i) => `<li style="animation-delay:${i * 90}ms">${s}</li>`).join("")}</ol>`;
+  }
+  Object.entries(t.nodes).forEach(([id, g]) => {
+    const key = id === "edge" ? "edge" : id;
+    g.style.cursor = "pointer";
+    g.addEventListener("click", () => open(key));
+    g.addEventListener("keydown", (e) => { if (e.key === "Enter") open(key); });
+  });
+  document.getElementById("raise").addEventListener("click", async (e) => {
+    if (running) return; running = true; e.target.disabled = true;
+    drawer.innerHTML = `<h4>Live</h4><p class="muted">Trace trc-20261016-040020-8a1f running… click a box when it finishes.</p>`;
+    await MaestroTopology.runIncident(t, { caller: "console", holdMs: 0 });
+    ran = true; running = false; e.target.disabled = false; open("maestro");
+  });
+})();
+</script>
+</body>
+</html>

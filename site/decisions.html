@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Decisions — Maestro</title>
+<meta name="description" content="The Architecture Decision Records behind the Maestro lab: why KIND, agentgateway, MCP with JWT, Keycloak, Prometheus, SKILL.md, and more.">
+<link rel="stylesheet" href="assets/site.css">
+<script src="assets/icons.js"></script>
+<script src="assets/site.js"></script>
+</head>
+<body>
+<header id="site-header"></header>
+
+<section class="hero" style="padding-bottom:24px">
+  <div class="wrap">
+    <span class="eyebrow">Architecture Decision Records</span>
+    <h1>The why, for humans and for agents</h1>
+    <p class="lede">Every significant choice is an ADR so that whoever extends the lab later, human or AI, sees why things are the way they are. ADRs are immutable once accepted; a change is a new ADR that supersedes the old one. The convention itself is ADR-0001.</p>
+  </div>
+</section>
+
+<section style="padding-top:10px">
+  <div class="wrap" id="adrs" style="display:grid;gap:10px"></div>
+</section>
+
+<section>
+  <div class="wrap">
+    <span class="eyebrow">Conventions for contributors</span>
+    <h2>Non-negotiables in <code>AGENTS.md</code></h2>
+    <div class="cards">
+      <div class="card reveal"><h3>Idempotent build</h3><p><code>make up</code> converges from any state; <code>make down</code> leaves nothing behind but Docker images. Never write a step that only works the first time.</p></div>
+      <div class="card reveal d1"><h3>No secrets in the repo</h3><p>The only secret is the Anthropic API key, read at deploy time from <code>~/.maestro/secrets.env</code>. Demo passwords are intentionally public and documented.</p></div>
+      <div class="card reveal d2"><h3>Contracts are the source of truth</h3><p>Service names, ports, env vars, event and finding schemas live in <code>docs/contracts.md</code>. Change the doc and every consumer in the same change.</p></div>
+      <div class="card reveal d3"><h3>Cognition lives in skills</h3><p>If an agent needs to know something about a domain, it goes in that domain's SKILL.md or its references. The Python stays domain-agnostic plumbing.</p></div>
+      <div class="card reveal"><h3>Pinned versions</h3><p>Every image tag, chart version and Python dependency is pinned in one place. Bump deliberately.</p></div>
+      <div class="card reveal d1"><h3>The orchestrator is Maestro</h3><p>No other names. Namespaces, cluster and Helm release share the <code>maestro</code> prefix; domain agents are <code>&lt;domain&gt;-agent</code>.</p></div>
+    </div>
+  </div>
+</section>
+
+<footer id="site-footer"></footer>
+
+<script>
+(function () {
+  const BASE = MaestroSite.REPO + "/blob/main/docs/adr/";
+  const ADRS = [
+    ["0001", "record-architecture-decisions", "Record architecture decisions", "Immutable ADRs with a fixed template; supersede rather than edit."],
+    ["0002", "kind-on-a-single-vm", "Run the whole ecosystem in KIND on a single VM", "One VM, one cluster, fixed NodePort → host-port mappings 30080–30085. Fits in 15 GiB."],
+    ["0003", "agentgateway-as-fleet-gateway", "agentgateway is the fleet (MCP/AI) gateway", "The only open-source gateway that is MCP- and A2A-native with JWT validation and per-tool RBAC; run as plain Deployments."],
+    ["0004", "mcp-with-jwt-today-a2a-north-star", "MCP with JWT propagation today; A2A is the north star", "Keeps non-human identity to one place and one mechanism now; the gateway already routes A2A for later."],
+    ["0005", "keycloak-identity-and-token-propagation", "Keycloak issues identities; callers' tokens are propagated, not re-minted", "Services are OAuth clients with service accounts; Maestro cannot escalate."],
+    ["0006", "prometheus-grafana-shared-monitoring", "Prometheus + Grafana are the shared monitoring every domain sends to", "Native exporters everywhere; agents query PromQL and cite dashboard panels by deep link."],
+    ["0007", "skills-md-as-agent-cognition", "Agent cognition lives in agentskills.io SKILL.md bundles", "Domain teams own their agent's knowledge as Markdown; progressive disclosure via references."],
+    ["0008", "domain-agent-contract", "Every domain agent exposes the same assess contract and recommends, never remediates", "One Finding schema; agents are read-only by design."],
+    ["0009", "fleet-console-event-model", "The Fleet Console is an event hub fed by every component", "Components emit; the console animates. A ring buffer and SSE, no message broker."],
+    ["0010", "claude-models-and-effort", "Claude Opus 5.5 orchestrates, Claude Sonnet 5.5 runs domain agents", "Judgement where it matters, cost control where the job is narrow; adaptive thinking and structured output."],
+    ["0011", "fault-injection-scenarios", "Each domain ships a reversible fault scenario", "Real faults, derived active state, cleared explicitly by make up."],
+    ["0012", "idempotent-build", "One idempotent make up; one destructive make down", "Content-hash image tags, Helm convergence, a smoke test that proves the stack."],
+    ["0013", "domain-platform-stand-ins", "Open-source stand-ins for the domain platforms", "agentgateway as the edge, Valkey for cache, Kafka for messaging; each with native Prometheus export."],
+    ["0014", "github-pages-site", "A static GitHub Pages site explains the lab", "Vanilla HTML/CSS/JS under site/, deployed by a workflow; no build step, mirrors the docs."],
+  ];
+  document.getElementById("adrs").innerHTML = ADRS.map(([n, slug, title, why], i) =>
+    `<a class="adr reveal" style="transition-delay:${Math.min(i, 6) * 40}ms" href="${BASE}${n}-${slug}.md" rel="noopener"><span class="num">ADR-${n}</span><span><b>${title}</b><p>${why}</p></span><span class="pill ok">Accepted</span></a>`).join("");
+  if (window.MaestroSite) document.querySelectorAll(".adr").forEach(e => e.classList.add("in"));
+})();
+</script>
+</body>
+</html>

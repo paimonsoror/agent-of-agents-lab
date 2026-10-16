@@ -12,6 +12,10 @@ Everything runs end-to-end on a single VM inside a KIND cluster, with open-sourc
 stand-ins for the commercial platforms an enterprise would have, and it builds and
 tears down identically every time (`make up` / `make down`).
 
+**Animated tour:** <https://paimonsoror.github.io/agent-of-agents-lab/> walks through the
+architecture, a real incident end to end, the fault scenarios and the console (source in
+`site/`, published by GitHub Pages).
+
 ```
  consumers            orchestration        fleet gateway         domain agents         domain platforms      shared monitoring
  ─────────            ─────────────        ─────────────         ─────────────         ────────────────      ─────────────────
@@ -72,6 +76,7 @@ stack is healthy. `make scenario-<name>` injects a fault for the agents to find
 | `agents/` | Python services: the domain agents, Maestro, the Fleet Console, the sample member portal |
 | `deploy/` | KIND config, Helm chart, third-party Helm values, fault-injection scenarios |
 | `scripts/` | The idempotent build/teardown/smoke scripts the Makefile calls |
+| `site/` | The animated GitHub Pages tour (static HTML/CSS/JS, no build step; ADR-0014) |
 | `AGENTS.md` | Conventions for AI agents (and humans) extending this repository |
 
 ## Naming

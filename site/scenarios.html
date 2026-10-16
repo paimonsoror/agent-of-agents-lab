@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fault scenarios — Maestro</title>
+<meta name="description" content="Three reversible faults, one per domain, so the agents have something real to find: a bad route change, cache pressure, and consumer lag.">
+<link rel="stylesheet" href="assets/site.css">
+<script src="assets/icons.js"></script>
+<script src="assets/site.js"></script>
+</head>
+<body>
+<header id="site-header"></header>
+
+<section class="hero" style="padding-bottom:24px">
+  <div class="wrap">
+    <span class="eyebrow">Fault injection</span>
+    <h1>A healthy system makes for a dull demo</h1>
+    <p class="lede">Each domain ships one reversible fault that makes it the culprit. No synthetic metrics: the faults are real changes to the running platforms, so the agents read real signals. Inject one below to see the metric the agent watches and the verdict it returns.</p>
+    <p class="muted">Active state is never stored. The console and <code>make scenario-status</code> both derive it from the cluster (an annotation, a Job, a replica count), so they always agree. <a href="decisions.html">ADR-0011</a>.</p>
+  </div>
+</section>
+
+<section style="padding-top:10px">
+  <div class="wrap">
+    <svg width="0" height="0" style="position:absolute"><defs>
+      <linearGradient id="sparkFillOk" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3ecf8e"/><stop offset="1" stop-color="#3ecf8e" stop-opacity="0"/></linearGradient>
+      <linearGradient id="sparkFillBad" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff5c7a"/><stop offset="1" stop-color="#ff5c7a" stop-opacity="0"/></linearGradient>
+    </defs></svg>
+    <div class="cards" id="scenarios"></div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <span class="eyebrow">Mechanics</span>
+    <h2>What each scenario really does</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Scenario</th><th>Apply</th><th>Clear</th><th>Active when</th></tr></thead>
+      <tbody>
+        <tr><td><code>apim-bad-route</code></td><td>Patch the edge gateway ConfigMap so <code>/api/members</code> points at <code>portal-api-v2</code> (no such service); annotate <code>maestro.io/change-id=CHG0123</code>, <code>changed-by=platform-apim-bot</code>, <code>changed-at</code></td><td>Restore the route; annotate <code>maestro.io/last-rollback=CHG0123</code></td><td>annotation present</td></tr>
+        <tr><td><code>cache-pressure</code></td><td>Run Job <code>cache-filler</code> that writes well past Valkey's <code>maxmemory 64mb</code> (<code>allkeys-lru</code>)</td><td>Delete the Job; flush the filler keyspace with a one-shot Job</td><td>Job exists</td></tr>
+        <tr><td><code>messaging-lag</code></td><td>Scale <code>portal-consumer</code> to 0</td><td>Scale to 1</td><td>replicas == 0</td></tr>
+      </tbody>
+    </table></div>
+    <p>The member portal's load generator runs continuously so every metric has a baseline, and the edge gateway reloads its mounted config within about a minute of the ConfigMap change. Scenarios are applied from the console or with <code>make scenario-&lt;name&gt;</code>; <code>make up</code> clears all of them so every build starts from the baseline.</p>
+    <div class="callout">The APIM scenario doubles as the change-management story: the agent finds the change id and recommends the rollback, exactly as in the reference sketch where ServiceNow would hold the change record.</div>
+  </div>
+</section>
+
+<footer id="site-footer"></footer>
+
+<script>
+(function () {
+  const N = 48;
+  const noise = (base, amp) => Array.from({ length: N }, (_, i) => base + amp * Math.sin(i * 1.3) * Math.cos(i * .7) + (Math.random() - .5) * amp);
+  const S = [
+    { id: "apim-bad-route", icon: "edge-gateway", title: "Bad route change", domain: "APIM", metric: "5xx ratio on edge-gateway, /api/members",
+      promql: 'sum(rate(agentgateway_requests_total{status=~"5.."}[5m])) / sum(rate(agentgateway_requests_total[5m]))',
+      good: () => noise(.02, .01), bad: () => noise(.02, .01).map((v, i) => i < 28 ? v : .97 + (Math.random() - .5) * .02), max: 1,
+      okText: ["APIM cleared · 0.90", "5xx ratio 0.02 on the member routes; last change CHG0123 rolled back; backends healthy."],
+      badText: ["APIM implicated · 0.88", "5xx ratio rose to ~100% at 03:58:50 UTC, minutes after change CHG0123 repointed /api/members to portal-api-v2, which does not exist. Roll back CHG0123."] },
+    { id: "cache-pressure", icon: "valkey", title: "Cache pressure", domain: "Cache", metric: "evicted keys per second · hit ratio",
+      promql: 'rate(redis_evicted_keys_total[5m])   and   redis_keyspace_hits_total / (hits + misses)',
+      good: () => noise(2, 1), bad: () => noise(2, 1).map((v, i) => i < 22 ? v : Math.min(100, (i - 22) * 5 + 10 + Math.random() * 6)), max: 110,
+      okText: ["Cache cleared · 0.85", "Hit ratio 0.93, no evictions, used_memory 11 MiB of 64 MiB; portal-api latency within baseline."],
+      badText: ["Cache implicated · 0.86", "Evictions climbing at 90/s since the cache-filler job started; hit ratio collapsed from 0.93 to 0.31; portal-api p95 latency doubled. Stop the filler, review maxmemory sizing."] },
+    { id: "messaging-lag", icon: "apachekafka", title: "Consumer outage", domain: "Messaging", metric: "consumer-group lag for portal-consumer on member.events",
+      promql: 'sum(kafka_consumergroup_lag{consumergroup="portal-consumer"})',
+      good: () => noise(3, 2), bad: () => noise(3, 2).map((v, i) => i < 20 ? v : (i - 20) * 38 + Math.random() * 8), max: 1100,
+      okText: ["Messaging cleared · 0.92", "Lag 0 on member.events; group portal-consumer active with 1 member; producer rate steady."],
+      badText: ["Messaging implicated · 0.91", "Lag for portal-consumer growing without bound since 04:02 UTC while producers are healthy; the consumer group has no active members (deployment scaled to 0). Restore portal-consumer replicas."] },
+  ];
+  const W = 320, H = 110;
+  function poly(data, max) {
+    const pts = data.map((v, i) => [10 + i * (W - 20) / (N - 1), H - 12 - Math.max(0, Math.min(1, v / max)) * (H - 24)]);
+    return { line: pts.map(p => p.join(",")).join(" "), fill: `10,${H - 12} ` + pts.map(p => p.join(",")).join(" ") + ` ${W - 10},${H - 12}` };
+  }
+  const root = document.getElementById("scenarios");
+  S.forEach((s, idx) => {
+    const el = document.createElement("div"); el.className = "scenario reveal d" + (idx + 1);
+    const g = poly(s.good(), s.max);
+    el.innerHTML = `<header><h3>${MaestroIcons.svg(s.icon, 22)} ${s.title}</h3><span class="pill" data-pill>baseline</span></header>
+      <div class="muted" style="font-size:.85rem">${s.metric}</div>
+      <svg class="spark" viewBox="0 0 ${W} ${H}" aria-label="${s.metric}">
+        <line class="grid" x1="10" x2="${W - 10}" y1="${H - 12}" y2="${H - 12}"/><line class="grid" x1="10" x2="${W - 10}" y1="12" y2="12"/>
+        <polygon class="fill" points="${g.fill}" fill="url(#sparkFillOk)"/>
+        <polyline class="line" points="${g.line}"/>
+        <text x="${W - 10}" y="${H - 2}" text-anchor="end">last 30 min</text>
+      </svg>
+      <code style="font-size:.72rem;display:block;white-space:pre-wrap">${s.promql}</code>
+      <div class="verdict ok"><b>${s.okText[0]}</b><p>${s.okText[1]}</p></div>
+      <div class="kbd-row"><button class="btn small primary" data-act="inject">Inject fault</button><button class="btn small" data-act="clear" disabled>Clear</button><span class="muted" style="font-size:.78rem;align-self:center"><code>make scenario-${s.id}</code></span></div>`;
+    root.appendChild(el);
+    const line = el.querySelector(".line"), fill = el.querySelector(".fill"), pill = el.querySelector("[data-pill]"), v = el.querySelector(".verdict");
+    const bInj = el.querySelector('[data-act="inject"]'), bClr = el.querySelector('[data-act="clear"]');
+    function set(bad) {
+      const d = poly(bad ? s.bad() : s.good(), s.max);
+      line.setAttribute("points", d.line); fill.setAttribute("points", d.fill); fill.setAttribute("fill", bad ? "url(#sparkFillBad)" : "url(#sparkFillOk)");
+      line.classList.toggle("bad", bad);
+      const len = line.getTotalLength(); line.style.strokeDasharray = len; line.style.strokeDashoffset = len;
+      line.getBoundingClientRect(); line.style.transition = MaestroSite.REDUCED ? "none" : "stroke-dashoffset 1.4s ease"; line.style.strokeDashoffset = 0;
+      pill.textContent = bad ? "ACTIVE" : "baseline"; pill.className = "pill " + (bad ? "bad" : "");
+      v.className = "verdict " + (bad ? "bad" : "ok"); v.innerHTML = `<b>${(bad ? s.badText : s.okText)[0]}</b><p>${(bad ? s.badText : s.okText)[1]}</p>`;
+      bInj.disabled = bad; bClr.disabled = !bad;
+    }
+    bInj.addEventListener("click", () => set(true)); bClr.addEventListener("click", () => set(false));
+    set(false);
+  });
+})();
+</script>
+</body>
+</html>

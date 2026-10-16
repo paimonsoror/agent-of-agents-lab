@@ -45,6 +45,7 @@ deploy/
 scripts/             up.sh, down.sh, build-images.sh, smoke.sh, scenario.sh, remote.sh
 skills/              SKILL.md bundles; one directory per skill, agentskills.io format
 docs/                architecture, contracts, ADRs, runbook, demo script
+site/                GitHub Pages tour: static HTML/CSS/JS, no build step (ADR-0014); keep in step with docs/
 ```
 
 ## Adding a domain (the intended extension path)

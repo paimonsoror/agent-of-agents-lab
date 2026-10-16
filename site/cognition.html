@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cognition — Maestro</title>
+<meta name="description" content="Agents are plumbing; skills are knowledge. How SKILL.md bundles in the agentskills.io format drive Maestro and every domain agent.">
+<link rel="stylesheet" href="assets/site.css">
+<script src="assets/icons.js"></script>
+<script src="assets/site.js"></script>
+</head>
+<body>
+<header id="site-header"></header>
+
+<section class="hero" style="padding-bottom:24px">
+  <div class="wrap">
+    <span class="eyebrow">Cognition</span>
+    <h1>Agents are plumbing. Skills are knowledge.</h1>
+    <p class="lede">Nothing domain-specific lives in a prompt string in Python. Every agent loads Markdown skill bundles in the <a href="https://agentskills.io" rel="noopener">agentskills.io</a> format, written and owned by the domain team. The cache team improves the cache agent with a pull request.</p>
+  </div>
+</section>
+
+<section style="padding-top:10px">
+  <div class="wrap split">
+    <div>
+      <h2>What a domain agent loads</h2>
+      <p>At start, a domain agent reads its <b>domain skill</b> and the shared <b>Prometheus skill</b> fully into a cached system prompt. Files under <code>references/</code> are listed by name only; the agent reads one on demand through a <code>read_reference</code> tool. That is the progressive-disclosure pattern from the spec: the model sees what exists, and pulls detail only when a question needs it.</p>
+      <p>Watch the agent work through the APIM fault: it reads the skill, then opens one reference when the evidence points at a recent change.</p>
+      <div class="stage-controls"><button class="btn small primary" id="replay">↻ Replay</button></div>
+      <div class="log" id="skill-log"></div>
+    </div>
+    <div class="tree" id="tree">
+<span class="dir">skills/</span>
+├── <span class="dir">apim-observability/</span>
+│   ├── <span class="file" data-k="apim-skill">SKILL.md</span>            <span class="ref">failure modes · PromQL · what "implicated" means</span>
+│   └── <span class="dir">references/</span>
+│       ├── <span class="ref" data-k="apim-ref-routes">edge-gateway-routes.md</span>
+│       ├── <span class="ref" data-k="apim-ref-change">change-annotations.md</span>
+│       └── <span class="ref" data-k="apim-ref-dash">dashboard-panels.md</span>
+├── <span class="dir">cache-observability/</span>
+│   ├── <span class="file">SKILL.md</span>
+│   └── <span class="dir">references/</span> …
+├── <span class="dir">messaging-observability/</span>
+│   ├── <span class="file">SKILL.md</span>
+│   └── <span class="dir">references/</span> …
+├── <span class="dir">prometheus-observability/</span>
+│   ├── <span class="file" data-k="prom-skill">SKILL.md</span>            <span class="ref">label conventions · rate windows · signal → evidence</span>
+│   └── <span class="dir">references/</span> …
+└── <span class="dir">maestro-orchestration/</span>
+    ├── <span class="file" data-k="maestro-skill">SKILL.md</span>            <span class="ref">triage · which domains · scoring · writing for a responder</span>
+    └── <span class="dir">references/</span> …
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <span class="eyebrow">Anatomy of a skill</span>
+    <h2>What the APIM skill teaches its agent</h2>
+    <div class="cards">
+      <div class="card reveal"><h3>Failure modes</h3><p>Bad route change, backend down, auth misconfiguration, rate limiting, TLS expiry. For each: the symptom at the edge, the metric that proves it, and the first question to ask.</p></div>
+      <div class="card reveal d1"><h3>Exact PromQL</h3><p><code>sum(rate(agentgateway_requests_total{status=~"5.."}[5m])) / sum(rate(agentgateway_requests_total[5m]))</code>, the rate window to use, and the threshold at which the domain is implicated.</p></div>
+      <div class="card reveal d2"><h3>Platform-native tools</h3><p>How to read the edge gateway's declarative route config and its change annotations (<code>maestro.io/change-id</code>, <code>changed-by</code>, <code>changed-at</code>), so a finding names the change to roll back.</p></div>
+      <div class="card reveal d3"><h3>The dashboard, panel by panel</h3><p>Which Grafana dashboard (<code>domain-apim</code>) and which panel ids to cite, so the deep link in the evidence opens on exactly the graph the agent read.</p></div>
+      <div class="card reveal"><h3>What "cleared" requires</h3><p>Cleared is not "nothing looked wrong". The skill lists what the agent must positively check before it may return <code>implicated: false</code> with high confidence.</p></div>
+      <div class="card reveal d1"><h3>Recommend, never remediate</h3><p>The skill tells the agent to propose the action and the evidence a human needs to approve it. Agents are read-only by design (ADR-0008).</p></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap split">
+    <div>
+      <span class="eyebrow">Models</span>
+      <h2>Opus conducts, Sonnet investigates</h2>
+      <p><b>Maestro</b> runs Claude Opus 5.5 at high effort: it has to judge which domains matter, weigh three findings against each other, and write one assessment a responder can act on.</p>
+      <p><b>Domain agents</b> run Claude Sonnet 5.5 at medium effort: each has a narrow, well-specified job and a skill that tells it exactly what to check. Both use adaptive thinking, prompt caching on the skill-heavy system prompt, and structured output so findings and assessments always validate against the schema in <code>docs/contracts.md</code>.</p>
+      <p class="muted">Recorded in ADR-0010. The measured cost is about $0.20 per incident across the four loops.</p>
+    </div>
+    <div>
+      <span class="eyebrow">Contract</span>
+      <h2>Same shape from every domain</h2>
+      <p>Every agent exposes <code>&lt;domain&gt;_assess</code> and <code>&lt;domain&gt;_health</code> over MCP and returns the same Finding schema. Maestro consolidates findings into an Assessment without knowing anything about the platforms behind them. Adding a domain never touches Maestro.</p>
+<pre><code>Finding     { domain, implicated, confidence, summary,
+              evidence[], recommended_actions[] }
+Assessment  { trace_id, summary, implicated[], cleared[],
+              not_consulted[{domain, reason}], next_step }</code></pre>
+    </div>
+  </div>
+</section>
+
+<footer id="site-footer"></footer>
+
+<script>
+(function () {
+  const log = document.getElementById("skill-log"), tree = document.getElementById("tree");
+  const sleep = MaestroSite.sleep;
+  const lit = (k, on) => { const e = tree.querySelector(`[data-k="${k}"]`); if (e) { e.classList.toggle("lit", on); e.classList.toggle("glow", on); } };
+  const line = (cls, s) => { const d = document.createElement("div"); d.className = cls || ""; d.innerHTML = s; log.appendChild(d); };
+  let gen = 0;
+  async function play() {
+    const my = ++gen; log.innerHTML = ""; tree.querySelectorAll(".lit").forEach(e => e.classList.remove("lit", "glow"));
+    const steps = [
+      [800, () => { lit("apim-skill", true); line("", `<span class="k">skills.loaded</span>  apim-observability  (SKILL.md, 412 lines → system prompt, cached)`); }],
+      [800, () => { lit("prom-skill", true); line("", `<span class="k">skills.loaded</span>  prometheus-observability  (shared)`); }],
+      [900, () => line("dim", `references available: edge-gateway-routes.md, change-annotations.md, dashboard-panels.md`)],
+      [1100, () => line("", `<span class="k">tool</span>  prometheus_query  5xx ratio on edge-gateway = 0.97 (threshold 0.05)`)],
+      [1000, () => line("", `<span class="k">tool</span>  edge_route_config  /api/members → portal-api-v2.member-portal:8000  <span class="bad">no such service</span>`)],
+      [900, () => { lit("apim-ref-change", true); line("", `<span class="k">read_reference</span>  apim-observability / change-annotations.md`); }],
+      [900, () => line("dim", `"a route change annotated maestro.io/change-id within 15 min of a 5xx rise is the leading hypothesis; name the id and the author"`)],
+      [1000, () => line("", `<span class="k">tool</span>  edge_change_annotations  change-id=CHG0123  by=platform-apim-bot  at=03:58:50Z`)],
+      [900, () => { lit("apim-ref-dash", true); line("", `<span class="k">read_reference</span>  apim-observability / dashboard-panels.md  → cite domain-apim panel 2`); }],
+      [900, () => line("bad", `finding.returned  implicated 0.88  "Roll back CHG0123"`)],
+    ];
+    for (const [ms, fn] of steps) { if (my !== gen) return; fn(); await sleep(ms); }
+  }
+  document.getElementById("replay").addEventListener("click", play);
+  play();
+})();
+</script>
+</body>
+</html>

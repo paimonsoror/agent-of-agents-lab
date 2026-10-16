@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Maestro — an agent of agents for observability</title>
+<meta name="description" content="A working reference architecture where one question to Maestro replaces the first hour of a P1: domain agents, a governed MCP gateway, shared monitoring, and a console that shows the system think.">
+<link rel="stylesheet" href="assets/site.css">
+<script src="assets/icons.js"></script>
+<script src="assets/site.js"></script>
+<script src="assets/topology.js"></script>
+</head>
+<body>
+<header id="site-header"></header>
+
+<section class="hero">
+  <div class="wrap grid">
+    <div>
+      <span class="eyebrow">Reference architecture · lab</span>
+      <h1>One question replaces the <span>first hour</span> of a P1.</h1>
+      <p class="lede">Maestro is the conductor. Each technology domain owns an agent that knows its platform and knows exactly what to look for in the shared monitoring. A consumer asks once; Maestro federates, consolidates, and hands a human one assessment with evidence.</p>
+      <div class="cta">
+        <a class="btn primary" href="how-it-works.html">Watch an incident flow →</a>
+        <a class="btn" href="get-started.html">Build it in a lab</a>
+        <a class="btn" href="https://github.com/paimonsoror/agent-of-agents-lab" rel="noopener">GitHub</a>
+      </div>
+      <p class="muted" style="margin-top:18px;font-size:.9rem">Nothing on this page is a mock-up. Every box in the animation is a running component in the repository, built with one <code>make up</code>.</p>
+    </div>
+    <div>
+      <div class="stage" id="hero-stage"><div class="caption" id="hero-caption">Starting…</div></div>
+      <div class="stage-controls">
+        <button class="btn small" id="hero-replay">↻ Replay</button>
+        <div class="toggle" role="group" aria-label="Caller">
+          <button class="on" data-caller="console">Fleet Console</button>
+          <button data-caller="ide">Engineer in IDE</button>
+        </div>
+        <span class="spacer"></span>
+        <span class="muted" style="font-size:.8rem">Loops automatically · <a href="how-it-works.html">step through it</a></span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <span class="eyebrow">The problem</span>
+    <h2>Dozens of domains, one incident, no single pane of truth</h2>
+    <div class="cards">
+      <div class="card reveal"><h3>Tribal knowledge</h3><p>API management, caching, messaging, compute, network: each platform team knows "what to look at when it breaks", and nobody else does.</p></div>
+      <div class="card reveal d1"><h3>The first hour</h3><p>When a P1 lands, responders spend it finding the right people and the right dashboards before anyone looks at evidence.</p></div>
+      <div class="card reveal d2"><h3>Agents without governance</h3><p>Giving every team an AI agent helps only if calls between agents carry real identity and are allowed per caller, not shared secrets.</p></div>
+      <div class="card reveal d3"><h3>Labs that drift</h3><p>A demo that works once is a liability. The build must converge from any state and tear down to nothing, in every lab.</p></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <span class="eyebrow">What the lab demonstrates</span>
+    <h2>Seven claims, each backed by running code</h2>
+    <div class="cards">
+      <div class="card reveal"><h3><i data-icon="skills" data-size="22"></i>Federated, domain-scoped cognition</h3><p>Each agent is driven by a <code>SKILL.md</code> bundle in the <a href="https://agentskills.io" rel="noopener">agentskills.io</a> format for its domain, plus a shared Prometheus skill. The domain team owns the knowledge; the Python stays plumbing.</p><a href="cognition.html">How cognition works →</a></div>
+      <div class="card reveal d1"><h3><i data-icon="gateway" data-size="22"></i>Agent-to-agent transport with real identity</h3><p>MCP over an open-source AI gateway. Every hop carries a Keycloak-issued JWT, and the gateway filters tools by the caller's roles before the orchestrator can even see them.</p><a href="architecture.html#identity">Identity and trust →</a></div>
+      <div class="card reveal d2"><h3><i data-icon="maestro" data-size="22"></i>A2A as the north star</h3><p>The same gateway speaks A2A. Moving from MCP is a routing-policy change and one adapter, recorded in ADR-0004, once non-human identity is mature enough.</p><a href="decisions.html">Read the decisions →</a></div>
+      <div class="card reveal d3"><h3><i data-icon="prometheus" data-size="22"></i>Monitoring every domain already sends to</h3><p>Prometheus and Grafana stand in for the enterprise tool. All platforms export natively. Agents query PromQL and cite the exact Grafana panel they read.</p><a href="architecture.html#monitoring">Shared monitoring →</a></div>
+      <div class="card reveal"><h3><i data-icon="console" data-size="22"></i>Executive-grade visibility</h3><p>The Fleet Console animates each request live and lets anyone click a box for a play-by-play: what was asked, what Maestro asked each agent, and how.</p><a href="console.html">Fleet Console →</a></div>
+      <div class="card reveal d1"><h3><i data-icon="ide" data-size="22"></i>Same agents, same tools, in the IDE</h3><p>Claude Code, Copilot or Cursor connect to the same gateway endpoint with the engineer's own token. What they are not entitled to, they never see.</p><a href="get-started.html#ide">IDE setup →</a></div>
+      <div class="card reveal d2"><h3><i data-icon="edge-gateway" data-size="22"></i>Repeatable labs</h3><p>One command builds the whole stack from nothing inside KIND on a single VM. One command removes it. Three reversible faults give the agents something real to find.</p><a href="scenarios.html">Fault scenarios →</a></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <span class="eyebrow">Measured on the lab VM</span>
+    <h2>What an incident costs</h2>
+    <p class="lede">Numbers from real runs of the <code>apim-bad-route</code> fault against Claude Opus 5.5 (Maestro) and Claude Sonnet 5.5 (three domain agents).</p>
+    <div class="stats">
+      <div class="stat reveal"><b>25–35 s</b><span>incident raised → assessment posted</span></div>
+      <div class="stat reveal d1"><b>≈ $0.20</b><span>per incident, four model loops</span></div>
+      <div class="stat reveal d2"><b>0.88–0.92</b><span>confidence APIM was implicated</span></div>
+      <div class="stat reveal d3"><b>CHG0123</b><span>the change it told the responder to roll back</span></div>
+      <div class="stat reveal d4"><b>&lt; 1 min</b><span>re-running <code>make up</code> when nothing changed</span></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <span class="eyebrow">Open-source stand-ins</span>
+    <h2>Designed against enterprise products, built on what runs in 15 GiB</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Role in the enterprise</th><th>Reference product</th><th>In the lab</th></tr></thead>
+      <tbody>
+        <tr><td>AI / API gateway with MCP</td><td>Kong AI Gateway</td><td><i data-icon="gateway" data-size="16"></i> agentgateway (fleet gateway)</td></tr>
+        <tr><td>Identity provider, non-human identities</td><td>Entra ID / Okta</td><td><i data-icon="keycloak" data-size="16"></i> Keycloak</td></tr>
+        <tr><td>API management platform</td><td>Kong Konnect</td><td><i data-icon="edge-gateway" data-size="16"></i> a second agentgateway as the edge</td></tr>
+        <tr><td>Distributed cache</td><td>Redis Enterprise</td><td><i data-icon="valkey" data-size="16"></i> Valkey + redis_exporter</td></tr>
+        <tr><td>Messaging</td><td>Kafka / IBM MQ</td><td><i data-icon="apachekafka" data-size="16"></i> Kafka (KRaft) + kafka-exporter</td></tr>
+        <tr><td>Shared monitoring</td><td>Dynatrace / Splunk</td><td><i data-icon="prometheus" data-size="16"></i> Prometheus + <i data-icon="grafana" data-size="16"></i> Grafana</td></tr>
+        <tr><td>ITSM / chat intake</td><td>ServiceNow / Teams</td><td><i data-icon="console" data-size="16"></i> Fleet Console "Raise P1 incident" button</td></tr>
+        <tr><td>Enterprise Kubernetes</td><td>VMware / OpenShift</td><td>KIND on one VM</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<footer id="site-footer"></footer>
+
+<script>
+(function () {
+  const CAPTIONS = [
+    "1 · The caller gets its own identity: a JWT from Keycloak",
+    "2 · Maestro receives the question and loads its orchestration skill",
+    "3 · The gateway lists only the tools the caller's roles allow",
+    "4 · Fan-out: the relevant domain agents are consulted in parallel",
+    "5 · Agents gather evidence from their platform and from Prometheus",
+    "6 · Findings return: one domain implicated, the others cleared",
+    "7 · Maestro posts one consolidated assessment to the caller",
+    "8 · A human decides. Maestro recommends; it never remediates",
+  ];
+  const stage = document.getElementById("hero-stage"), cap = document.getElementById("hero-caption");
+  const t = MaestroTopology.render(stage, {});
+  let caller = "console", running = false, gen = 0;
+  async function loop() {
+    const my = ++gen;
+    if (running) return; running = true;
+    while (my === gen) {
+      await MaestroTopology.runIncident(t, { caller, onStep: i => { cap.textContent = CAPTIONS[i]; }, holdMs: 3000 });
+    }
+    running = false;
+  }
+  document.getElementById("hero-replay").addEventListener("click", () => { gen++; running = false; loop(); });
+  document.querySelectorAll(".toggle [data-caller]").forEach(b => b.addEventListener("click", () => {
+    document.querySelectorAll(".toggle [data-caller]").forEach(x => x.classList.remove("on")); b.classList.add("on");
+    caller = b.dataset.caller; gen++; running = false; loop();
+  }));
+  loop();
+})();
+</script>
+</body>
+</html>
