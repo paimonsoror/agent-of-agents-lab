@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Maestro Fleet Console</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <div>
+        <div class="brand-title">Maestro <span class="muted">Fleet Console</span></div>
+        <div class="brand-sub">Agent of agents for observability · live data flow</div>
+      </div>
+    </div>
+    <nav class="toplinks" id="toplinks"></nav>
+    <div class="topright">
+      <div class="chip trace-chip" id="trace-chip">
+        <span class="chip-state" id="trace-state">IDLE</span>
+        <span class="chip-id" id="trace-id">no active trace</span>
+        <span class="chip-elapsed" id="trace-elapsed"></span>
+      </div>
+      <button class="btn ghost" id="how-it-works" title="The eight steps of every request">How it works</button>
+      <button class="btn ghost" id="theme-toggle" title="Toggle light / dark">☾</button>
+    </div>
+  </header>
+
+  <aside class="drawer" id="drawer" hidden aria-label="Play-by-play">
+    <div class="drawer-head">
+      <div class="drawer-titles">
+        <div class="drawer-title" id="drawer-title"></div>
+        <div class="drawer-sub" id="drawer-sub"></div>
+      </div>
+      <button class="btn ghost drawer-close" id="drawer-close" title="Close (Esc)" aria-label="Close">✕</button>
+    </div>
+    <div class="drawer-body" id="drawer-body"></div>
+  </aside>
+
+  <main class="layout">
+    <aside class="panel left">
+      <section class="card">
+        <h2>Incident intake</h2>
+        <p class="hint">Stands in for the ITSM / chat bridge. Raising an incident asks Maestro as the console's own identity.</p>
+        <label>Title <input id="inc-title" value="Member portal API returning 503s"></label>
+        <label>Service <input id="inc-service" value="member-portal"></label>
+        <label>Description <textarea id="inc-desc" rows="2">Members report errors on login and account pages since ~10 minutes ago. Error rate climbing.</textarea></label>
+        <button class="btn danger big" id="raise-incident">Raise P1 incident</button>
+      </section>
+
+      <section class="card">
+        <h2>Ask Maestro</h2>
+        <textarea id="ask-text" rows="2" placeholder="e.g. Is the cache tier healthy right now?"></textarea>
+        <button class="btn primary" id="ask-btn">Ask</button>
+      </section>
+
+      <section class="card">
+        <h2>Fault scenarios</h2>
+        <p class="hint">Reversible faults the agents can find. State is read from the cluster.</p>
+        <div id="scenarios" class="scenarios"></div>
+        <button class="btn ghost small" id="clear-scenarios">Clear all</button>
+      </section>
+
+      <section class="card legend">
+        <h2>Legend</h2>
+        <div><i class="dot c-incident"></i> incident signal</div>
+        <div><i class="dot c-request"></i> request via gateway (JWT)</div>
+        <div><i class="dot c-skills"></i> skills loaded</div>
+        <div><i class="dot c-evidence"></i> evidence gathered</div>
+        <div><i class="dot c-finding"></i> finding / assessment</div>
+        <div><i class="dot c-scenario"></i> fault injected</div>
+        <p class="hint click-hint">Click any box on the board for its play-by-play — what it was asked, what it did, how it talked to its neighbours.</p>
+      </section>
+    </aside>
+
+    <section class="stage">
+      <div class="board-wrap">
+        <svg id="board" viewBox="0 0 1600 880" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Fleet topology">
+          <defs>
+            <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+              <feGaussianBlur stdDeviation="4" result="b"/>
+              <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+            <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+          <g id="static-edges"></g>
+          <g id="groups"></g>
+          <g id="nodes"></g>
+          <g id="active-edges"></g>
+          <g id="labels"></g>
+        </svg>
+      </div>
+      <div class="playback">
+        <div class="pb-controls">
+          <button class="btn ghost" id="pb-restart" title="Restart">⟲</button>
+          <button class="btn ghost" id="pb-back" title="Step back">‹</button>
+          <button class="btn primary" id="pb-play" title="Play / pause">▶</button>
+          <button class="btn ghost" id="pb-fwd" title="Step forward">›</button>
+          <span class="pb-counter" id="pb-counter">0/0</span>
+        </div>
+        <div class="pb-caption" id="pb-caption">Raise an incident or ask a question to watch the fleet work. Completed traces can be replayed here.</div>
+        <div class="pb-dots" id="pb-dots"></div>
+      </div>
+    </section>
+  </main>
+
+  <section class="bottom">
+    <div class="card timeline-card">
+      <div class="card-head"><h2>Timeline</h2><span class="muted" id="timeline-count">0 events</span></div>
+      <div class="timeline" id="timeline"></div>
+    </div>
+    <div class="card assessment-card" id="assessment-card">
+      <div class="card-head"><h2>Assessment</h2><span class="muted" id="assessment-meta"></span></div>
+      <div id="assessment" class="assessment empty">Maestro's consolidated assessment will appear here.</div>
+    </div>
+  </section>
+
+  <script src="/topology.js"></script>
+  <script src="/icons.js"></script>
+  <script src="/drawer.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

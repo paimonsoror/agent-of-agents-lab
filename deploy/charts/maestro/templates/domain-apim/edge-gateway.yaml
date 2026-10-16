@@ -1,0 +1,99 @@
+{{- /*
+The API-management domain's platform: a second agentgateway acting as the enterprise edge for the
+member portal (ADR-0013). Its whole configuration is this ConfigMap, which the APIM agent reads as
+"declarative config + change history" (annotations) and which the apim-bad-route scenario patches
+(scripts/scenario.sh). agentgateway watches the mounted file and reloads on change.
+Shape verified against the binary 2026-10-15.
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: edge-gateway-config
+  namespace: domain-apim
+  labels: { app: edge-gateway, maestro.io/platform: apim }
+  annotations:
+    maestro.io/owner: platform-apim
+    maestro.io/baseline: "routes members,health -> portal-api.member-portal:8000"
+data:
+  config.yaml: |
+    config:
+      logging:
+        format: json
+    gateways:
+      default:
+        port: 4000
+    routes:
+    - name: members
+      matches:
+      - path:
+          pathPrefix: /api/members
+      backends:
+      - host: portal-api.member-portal:8000
+    - name: health
+      matches:
+      - path:
+          pathPrefix: /api/health
+      backends:
+      - host: portal-api.member-portal:8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: edge-gateway
+  namespace: domain-apim
+  labels: { app: edge-gateway, maestro.io/platform: apim }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: edge-gateway }
+  template:
+    metadata:
+      labels: { app: edge-gateway, maestro.io/platform: apim }
+    spec:
+      containers:
+        - name: agentgateway
+          image: {{ .Values.thirdParty.agentgateway | quote }}
+          args: ["-f", "/config/config.yaml"]
+          ports:
+            - { name: http, containerPort: 4000 }
+            - { name: metrics, containerPort: 15020 }
+            - { name: readiness, containerPort: 15021 }
+          volumeMounts:
+            - { name: config, mountPath: /config, readOnly: true }
+          readinessProbe:
+            httpGet: { path: /healthz/ready, port: readiness }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz/ready, port: readiness }
+            periodSeconds: 30
+          resources: {{ toYaml .Values.resources.gateway | nindent 12 }}
+      volumes:
+        - name: config
+          configMap: { name: edge-gateway-config }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: edge-gateway
+  namespace: domain-apim
+  labels: { app: edge-gateway }
+spec:
+  type: NodePort
+  selector: { app: edge-gateway }
+  ports:
+    - { name: http, port: 80, targetPort: http, nodePort: {{ .Values.ports.edgeGateway }} }
+    - { name: metrics, port: 15020, targetPort: metrics }
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: edge-gateway
+  namespace: domain-apim
+  labels: { app: edge-gateway }
+spec:
+  selector:
+    matchLabels: { app: edge-gateway }
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 15s

@@ -1,0 +1,8 @@
+# Everything in this repo is deployed to Linux. Force LF so a Windows checkout
+# cannot break shell scripts, Dockerfiles, or Helm templates.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.woff2 binary

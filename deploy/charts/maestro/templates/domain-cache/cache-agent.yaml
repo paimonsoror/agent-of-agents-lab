@@ -1,0 +1,9 @@
+{{ include "maestro.domainAgent" (dict
+  "root" .
+  "name" "cache-agent"
+  "namespace" "domain-cache"
+  "domain" "cache"
+  "skills" "cache-observability,prometheus-observability"
+  "serviceAccount" ""
+  "extraEnv" (list
+    (dict "name" "VALKEY_URL" "value" "redis://valkey.domain-cache:6379"))) }}

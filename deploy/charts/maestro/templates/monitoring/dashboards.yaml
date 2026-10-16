@@ -1,0 +1,21 @@
+{{- /*
+Grafana dashboards from deploy/grafana/*.json, one ConfigMap each, picked up by the
+kube-prometheus-stack Grafana sidecar (label grafana_dashboard=1, folder from annotation).
+up.sh passes them with --set-file grafana.dashboards.<name>=deploy/grafana/<name>.json.
+*/ -}}
+{{- range $name, $json := .Values.grafana.dashboards }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dashboard-{{ $name }}
+  namespace: {{ $.Values.monitoring.namespace }}
+  labels:
+    grafana_dashboard: "1"
+    maestro.io/part-of: maestro
+  annotations:
+    grafana_folder: {{ $.Values.grafana.folder | quote }}
+data:
+  {{ $name }}.json: |-
+{{ $json | indent 4 }}
+---
+{{- end }}

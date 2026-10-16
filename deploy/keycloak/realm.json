@@ -1,0 +1,142 @@
+{
+  "realm": "maestro",
+  "displayName": "Maestro fleet",
+  "enabled": true,
+  "sslRequired": "none",
+  "accessTokenLifespan": 28800,
+  "accessTokenLifespanForImplicitFlow": 28800,
+  "ssoSessionIdleTimeout": 28800,
+  "ssoSessionMaxLifespan": 86400,
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "bruteForceProtected": false,
+  "roles": {
+    "realm": [
+      { "name": "maestro:ask", "description": "May ask Maestro (the orchestrator) a question" },
+      { "name": "domain:apim", "description": "May consult the API-management domain agent" },
+      { "name": "domain:cache", "description": "May consult the distributed-cache domain agent" },
+      { "name": "domain:messaging", "description": "May consult the messaging domain agent" }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "fleet-console",
+      "name": "Fleet Console (incident intake)",
+      "description": "Non-human identity of the Fleet Console. Stands in for the ITSM / chat bridge.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "fleet-console-secret",
+      "clientAuthenticatorType": "client-secret",
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "fullScopeAllowed": true,
+      "protocolMappers": [
+        {
+          "name": "maestro-gateway-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "maestro-gateway",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "maestro",
+      "name": "Maestro orchestrator",
+      "description": "Non-human identity of Maestro. Reserved: Maestro propagates callers' tokens and never calls downstream as itself (ADR-0005).",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "maestro-secret",
+      "clientAuthenticatorType": "client-secret",
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "fullScopeAllowed": true,
+      "protocolMappers": [
+        {
+          "name": "maestro-gateway-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "maestro-gateway",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "ide-cli",
+      "name": "Engineer in IDE / CLI",
+      "description": "Public client used by humans to obtain a token for IDE MCP clients (password grant for the demo).",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "redirectUris": ["*"],
+      "webOrigins": ["*"],
+      "fullScopeAllowed": true,
+      "protocolMappers": [
+        {
+          "name": "maestro-gateway-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "maestro-gateway",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "service-account-fleet-console",
+      "enabled": true,
+      "serviceAccountClientId": "fleet-console",
+      "realmRoles": ["maestro:ask", "domain:apim", "domain:cache", "domain:messaging"]
+    },
+    {
+      "username": "service-account-maestro",
+      "enabled": true,
+      "serviceAccountClientId": "maestro",
+      "realmRoles": []
+    },
+    {
+      "username": "engineer",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Erin",
+      "lastName": "Engineer",
+      "email": "engineer@maestro.local",
+      "credentials": [{ "type": "password", "value": "engineer", "temporary": false }],
+      "requiredActions": [],
+      "realmRoles": ["maestro:ask", "domain:apim", "domain:cache"]
+    },
+    {
+      "username": "sre-lead",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Sam",
+      "lastName": "SRE-Lead",
+      "email": "sre-lead@maestro.local",
+      "credentials": [{ "type": "password", "value": "sre-lead", "temporary": false }],
+      "requiredActions": [],
+      "realmRoles": ["maestro:ask", "domain:apim", "domain:cache", "domain:messaging"]
+    }
+  ]
+}

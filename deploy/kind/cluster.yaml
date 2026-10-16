@@ -1,0 +1,33 @@
+# KIND cluster for the Maestro fleet. Created by scripts/up.sh with
+#   kind create cluster --name maestro --config deploy/kind/cluster.yaml --image $KIND_NODE_IMAGE
+# Host ports are fixed (docs/contracts.md) so URLs are stable across labs and need no DNS.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: maestro
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 30080   # fleet-console
+        hostPort: 30080
+        listenAddress: 0.0.0.0
+        protocol: TCP
+      - containerPort: 30081   # grafana
+        hostPort: 30081
+        listenAddress: 0.0.0.0
+        protocol: TCP
+      - containerPort: 30082   # keycloak (JWT issuer)
+        hostPort: 30082
+        listenAddress: 0.0.0.0
+        protocol: TCP
+      - containerPort: 30083   # fleet gateway (agentgateway): /agents/mcp /maestro/mcp /ui
+        hostPort: 30083
+        listenAddress: 0.0.0.0
+        protocol: TCP
+      - containerPort: 30084   # prometheus
+        hostPort: 30084
+        listenAddress: 0.0.0.0
+        protocol: TCP
+      - containerPort: 30085   # edge gateway (member portal public API)
+        hostPort: 30085
+        listenAddress: 0.0.0.0
+        protocol: TCP

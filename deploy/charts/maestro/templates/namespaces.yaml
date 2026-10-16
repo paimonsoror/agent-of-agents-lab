@@ -1,0 +1,10 @@
+{{- /* The release namespace (maestro) is created by helm --create-namespace; the rest are ours. */ -}}
+{{- range list "maestro-identity" "maestro-gateway" "domain-apim" "domain-cache" "domain-messaging" "member-portal" }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ . }}
+  labels:
+    maestro.io/part-of: maestro
+---
+{{- end }}

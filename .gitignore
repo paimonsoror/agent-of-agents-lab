@@ -1,0 +1,27 @@
+# Secrets never live in the repo. See docs/runbook.md for where they go.
+*.env
+!*.env.example
+!deploy/versions.env
+secrets/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Node (fleet UI)
+node_modules/
+dist/
+
+# Local build state written by the Makefile on the VM
+.build/
+*.log
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

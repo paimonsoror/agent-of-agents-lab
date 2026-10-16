@@ -1,0 +1,32 @@
+# Scenario cache-pressure (ADR-0011): keep writing random 4 KiB values until cleared, so Valkey
+# (maxmemory 64mb, allkeys-lru) evicts continuously and the portal's cache keys keep disappearing.
+# "Active" == this Job exists. Cleared by deleting it and running cache-flush.yaml.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cache-filler
+  namespace: domain-cache
+  labels: { app: cache-filler, maestro.io/scenario: cache-pressure }
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 7200
+  ttlSecondsAfterFinished: 60
+  template:
+    metadata:
+      labels: { app: cache-filler, maestro.io/scenario: cache-pressure }
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: filler
+          image: valkey/valkey:9.1.2
+          command: ["sh", "-c"]
+          args:
+            - |
+              echo "filling valkey until deleted";
+              while true; do
+                valkey-benchmark -h valkey.domain-cache -p 6379 -t set -n 50000 -d 4096 -r 2000000 -c 8 -q --threads 2 >/dev/null 2>&1 || true;
+                sleep 2;
+              done
+          resources:
+            requests: { cpu: 50m, memory: 32Mi }
+            limits: { memory: 96Mi }

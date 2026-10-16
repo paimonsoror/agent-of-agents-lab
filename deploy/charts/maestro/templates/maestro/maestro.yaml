@@ -1,0 +1,57 @@
+{{- /* Maestro, the orchestrator (ADR-0004, ADR-0010). HTTP API for the console + MCP server for IDEs via the gateway. */ -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: maestro
+  namespace: maestro
+  labels: { app: maestro, maestro.io/role: orchestrator }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: maestro }
+  template:
+    metadata:
+      labels: { app: maestro, maestro.io/role: orchestrator }
+      annotations:
+        checksum/anthropic: {{ .Values.anthropicApiKey | sha256sum }}
+    spec:
+      containers:
+        - name: maestro
+          image: "{{ .Values.images.maestro.repository }}:{{ .Values.images.maestro.tag }}"
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          ports:
+            - { name: http, containerPort: 8000 }
+          env:
+            - name: AGENT_SKILLS
+              value: maestro-orchestration
+            - name: FLEET_GATEWAY_MCP_URL
+              value: http://fleet-gateway.maestro-gateway/agents/mcp
+            {{- include "maestro.commonEnv" (dict "root" . "service" "maestro") | nindent 12 }}
+            {{- include "maestro.llmEnv" (dict "root" . "model" .Values.llm.maestroModel "effort" .Values.llm.maestroEffort) | nindent 12 }}
+          {{- include "maestro.httpProbes" 8000 | nindent 10 }}
+          resources: {{ toYaml .Values.resources.maestro | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: maestro
+  namespace: maestro
+  labels: { app: maestro }
+spec:
+  selector: { app: maestro }
+  ports:
+    - { name: http, port: 8000, targetPort: http }
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: maestro
+  namespace: maestro
+  labels: { app: maestro }
+spec:
+  selector:
+    matchLabels: { app: maestro }
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s

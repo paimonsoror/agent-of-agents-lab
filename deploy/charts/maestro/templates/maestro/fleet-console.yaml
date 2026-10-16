@@ -1,0 +1,134 @@
+{{- /*
+Fleet Console (ADR-0009): event hub + UI + incident intake + scenario controls.
+Its ServiceAccount has exactly the Kubernetes rights the three scenarios need (ADR-0011), nothing more.
+*/ -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fleet-console
+  namespace: maestro
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: fleet-console-scenarios
+  namespace: domain-apim
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: fleet-console-scenarios
+  namespace: domain-apim
+subjects:
+  - { kind: ServiceAccount, name: fleet-console, namespace: maestro }
+roleRef: { kind: Role, name: fleet-console-scenarios, apiGroup: rbac.authorization.k8s.io }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: fleet-console-scenarios
+  namespace: domain-cache
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "create", "delete", "watch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: fleet-console-scenarios
+  namespace: domain-cache
+subjects:
+  - { kind: ServiceAccount, name: fleet-console, namespace: maestro }
+roleRef: { kind: Role, name: fleet-console-scenarios, apiGroup: rbac.authorization.k8s.io }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: fleet-console-scenarios
+  namespace: member-portal
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "deployments/scale"]
+    verbs: ["get", "list", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: fleet-console-scenarios
+  namespace: member-portal
+subjects:
+  - { kind: ServiceAccount, name: fleet-console, namespace: maestro }
+roleRef: { kind: Role, name: fleet-console-scenarios, apiGroup: rbac.authorization.k8s.io }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fleet-console
+  namespace: maestro
+  labels: { app: fleet-console, maestro.io/role: console }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: fleet-console }
+  template:
+    metadata:
+      labels: { app: fleet-console, maestro.io/role: console }
+    spec:
+      serviceAccountName: fleet-console
+      containers:
+        - name: console
+          image: "{{ .Values.images.fleetConsole.repository }}:{{ .Values.images.fleetConsole.tag }}"
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          ports:
+            - { name: http, containerPort: 8080 }
+          env:
+            - { name: MAESTRO_URL, value: "http://maestro.maestro:8000" }
+            - { name: OIDC_CLIENT_ID, value: "fleet-console" }
+            - { name: OIDC_CLIENT_SECRET, value: "fleet-console-secret" }
+            - { name: SCENARIO_FILLER_IMAGE, value: {{ .Values.thirdParty.valkey | quote }} }
+            - { name: VALKEY_IMAGE, value: {{ .Values.thirdParty.valkey | quote }} }
+            - name: DEMO_CREDENTIALS
+              value: {{ .Values.demo | toJson | quote }}
+            {{- include "maestro.commonEnv" (dict "root" . "service" "fleet-console") | nindent 12 }}
+          {{- include "maestro.httpProbes" 8080 | nindent 10 }}
+          resources: {{ toYaml .Values.resources.fleetConsole | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fleet-console
+  namespace: maestro
+  labels: { app: fleet-console }
+spec:
+  type: NodePort
+  selector: { app: fleet-console }
+  ports:
+    - { name: http, port: 8080, targetPort: http, nodePort: {{ .Values.ports.fleetConsole }} }
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: fleet-console
+  namespace: maestro
+  labels: { app: fleet-console }
+spec:
+  selector:
+    matchLabels: { app: fleet-console }
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s

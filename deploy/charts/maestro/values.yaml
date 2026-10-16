@@ -1,0 +1,96 @@
+# Values for the Maestro umbrella chart. scripts/up.sh sets everything marked "set by up.sh".
+# Names, ports and env vars follow docs/contracts.md. Change there first.
+
+hostIp: 127.0.0.1                 # set by up.sh — the VM's LAN IP; used for the JWT issuer and public URLs
+
+# First-party images (built by scripts/build-images.sh; tags are content hashes, set by up.sh)
+images:
+  pullPolicy: IfNotPresent
+  domainAgent:  { repository: maestro/domain-agent,  tag: local }
+  maestro:      { repository: maestro/maestro,       tag: local }
+  fleetConsole: { repository: maestro/fleet-console, tag: local }
+  memberPortal: { repository: maestro/member-portal, tag: local }
+
+# Third-party images (pinned in deploy/versions.env, set by up.sh)
+thirdParty:
+  agentgateway: cr.agentgateway.dev/agentgateway:v1.6.0
+  keycloak: quay.io/keycloak/keycloak:26.8.1
+  valkey: valkey/valkey:9.1.2
+  redisExporter: oliver006/redis_exporter:v1.94.0
+  kafka: apache/kafka:4.3.1
+  kafkaExporter: danielqsj/kafka-exporter:v1.10.0
+  busybox: busybox:1.37.0          # init containers that wait for dependencies
+
+# The only secret. Set by up.sh from ~/.maestro/secrets.env; never written to a values file.
+anthropicApiKey: ""
+
+llm:
+  agentModel: claude-sonnet-5-5
+  agentEffort: medium
+  maestroModel: claude-opus-5-5
+  maestroEffort: high
+  fallbacks: default
+  maxTurns: "12"
+
+# Keycloak realm JSON; set by up.sh with --set-file keycloak.realmJson=deploy/keycloak/realm.json
+keycloak:
+  realmJson: ""
+  adminUser: admin
+  adminPassword: maestro-demo
+
+# Demo credentials surfaced by the Fleet Console (hover cards on the tool links). Everything here is
+# intentionally public demo data — the stack holds nothing sensitive (docs/contracts.md "Identity").
+# Keep grafana.password in step with deploy/values/kube-prometheus-stack.yaml and the users with
+# deploy/keycloak/realm.json.
+demo:
+  grafana:  { username: admin, password: maestro-demo, note: "anonymous viewing is also enabled" }
+  keycloak: { username: admin, password: maestro-demo, note: "realm: maestro" }
+  gateway:  { note: "no login; read-only admin UI" }
+  prometheus: { note: "no login" }
+  edge:     { note: "no login; try GET /api/members/42" }
+  users:
+    - { username: engineer, password: engineer, roles: ["maestro:ask", "domain:apim", "domain:cache"] }
+    - { username: sre-lead, password: sre-lead, roles: ["maestro:ask", "domain:apim", "domain:cache", "domain:messaging"] }
+  serviceAccounts:
+    - { client_id: fleet-console, secret: fleet-console-secret }
+    - { client_id: maestro, secret: maestro-secret }
+
+# Grafana dashboards: map of <name> -> dashboard JSON; set by up.sh with --set-file per deploy/grafana/*.json
+grafana:
+  folder: Maestro
+  dashboards: {}
+
+# In-cluster endpoints of the monitoring release (kube-prometheus-stack, release "monitoring")
+monitoring:
+  prometheusUrl: http://monitoring-kube-prometheus-prometheus.maestro-monitoring:9090
+  namespace: maestro-monitoring
+
+ports:
+  fleetConsole: 30080
+  grafana: 30081
+  keycloak: 30082
+  fleetGateway: 30083
+  prometheus: 30084
+  edgeGateway: 30085
+
+# Resource requests/limits sized for a 15 GiB VM (see docs/runbook.md for the budget)
+resources:
+  keycloak:      { requests: { cpu: 300m, memory: 600Mi }, limits: { memory: 1Gi } }
+  gateway:       { requests: { cpu: 50m,  memory: 64Mi },  limits: { memory: 256Mi } }
+  valkey:        { requests: { cpu: 50m,  memory: 96Mi },  limits: { memory: 192Mi } }
+  exporter:      { requests: { cpu: 20m,  memory: 32Mi },  limits: { memory: 96Mi } }
+  kafka:         { requests: { cpu: 300m, memory: 768Mi }, limits: { memory: 1Gi } }
+  agent:         { requests: { cpu: 100m, memory: 160Mi }, limits: { memory: 512Mi } }
+  maestro:       { requests: { cpu: 100m, memory: 160Mi }, limits: { memory: 512Mi } }
+  fleetConsole:  { requests: { cpu: 50m,  memory: 96Mi },  limits: { memory: 256Mi } }
+  portal:        { requests: { cpu: 50m,  memory: 96Mi },  limits: { memory: 256Mi } }
+
+# Valkey platform settings (small on purpose so the cache-pressure scenario bites quickly)
+valkey:
+  maxmemory: 64mb
+  maxmemoryPolicy: allkeys-lru
+
+kafka:
+  heapOpts: "-Xmx512m -Xms256m"
+  topic: member.events
+  consumerGroup: portal-consumer

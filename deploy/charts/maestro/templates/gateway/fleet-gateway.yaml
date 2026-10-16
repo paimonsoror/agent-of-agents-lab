@@ -1,0 +1,165 @@
+{{- /*
+Fleet gateway: agentgateway v1.6.0 (ADR-0003). Config shape verified against the real binary on
+2026-10-15: routing-based mode (`gateways` + top-level `routes`), `ui.gateways: default` serves the
+admin UI at /ui on the gateway port, `pathPrefix` matches, MCP backend with multiplexed `targets[].mcp.host`,
+route-level `jwtAuth` (strict) + `backendAuth.passthrough` + `mcpAuthorization` CEL rules.
+Unauthenticated requests get 401; metrics are on :15020 (not the gateway port).
+The binary EXITS if the JWKS URL cannot be fetched at start, hence the init container that waits for Keycloak.
+*/ -}}
+{{- $issuer := include "maestro.issuer" . -}}
+{{- $jwks := include "maestro.jwksUrl" . -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fleet-gateway-config
+  namespace: maestro-gateway
+  labels: { app: fleet-gateway }
+data:
+  config.yaml: |
+    config:
+      logging:
+        format: json
+    gateways:
+      default:
+        port: 4000
+    ui:
+      gateways: default
+    routes:
+    - name: domain-agents
+      matches:
+      - path:
+          pathPrefix: /agents/mcp
+      policies:
+        cors:
+          allowOrigins: ["*"]
+          allowHeaders: [mcp-protocol-version, content-type, cache-control, mcp-session-id, authorization]
+          exposeHeaders: [Mcp-Session-Id]
+        jwtAuth:
+          mode: strict
+          issuer: {{ $issuer }}
+          audiences: [maestro-gateway]
+          jwks:
+            url: {{ $jwks }}
+        backendAuth:
+          passthrough: {}
+        # A domain-agent assessment is an LLM investigation (typically 20-90 s); the gateway's
+        # default upstream timeout (~10 s) would cut it off. Budget generously; Maestro has its own limits.
+        timeout:
+          requestTimeout: 600s
+          backendRequestTimeout: 600s
+        mcpAuthorization:
+          rules:
+          - 'mcp.tool.target == "apim" && "domain:apim" in jwt.realm_access.roles'
+          - 'mcp.tool.target == "cache" && "domain:cache" in jwt.realm_access.roles'
+          - 'mcp.tool.target == "messaging" && "domain:messaging" in jwt.realm_access.roles'
+      backends:
+      - mcp:
+          targets:
+          - name: apim
+            mcp:
+              host: http://apim-agent.domain-apim:8000/mcp
+          - name: cache
+            mcp:
+              host: http://cache-agent.domain-cache:8000/mcp
+          - name: messaging
+            mcp:
+              host: http://messaging-agent.domain-messaging:8000/mcp
+    - name: maestro
+      matches:
+      - path:
+          pathPrefix: /maestro/mcp
+      policies:
+        cors:
+          allowOrigins: ["*"]
+          allowHeaders: [mcp-protocol-version, content-type, cache-control, mcp-session-id, authorization]
+          exposeHeaders: [Mcp-Session-Id]
+        jwtAuth:
+          mode: strict
+          issuer: {{ $issuer }}
+          audiences: [maestro-gateway]
+          jwks:
+            url: {{ $jwks }}
+        backendAuth:
+          passthrough: {}
+        # A domain-agent assessment is an LLM investigation (typically 20-90 s); the gateway's
+        # default upstream timeout (~10 s) would cut it off. Budget generously; Maestro has its own limits.
+        timeout:
+          requestTimeout: 600s
+          backendRequestTimeout: 600s
+        mcpAuthorization:
+          rules:
+          - '"maestro:ask" in jwt.realm_access.roles'
+      backends:
+      - mcp:
+          targets:
+          - name: maestro
+            mcp:
+              host: http://maestro.maestro:8000/mcp
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fleet-gateway
+  namespace: maestro-gateway
+  labels: { app: fleet-gateway }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: fleet-gateway }
+  template:
+    metadata:
+      labels: { app: fleet-gateway }
+      annotations:
+        checksum/config: {{ printf "%s%s" $issuer $jwks | sha256sum }}
+    spec:
+      initContainers:
+        - name: wait-for-keycloak
+          image: {{ .Values.thirdParty.busybox | quote }}
+          command: ["sh", "-c", "until wget -qO- {{ $jwks }} >/dev/null 2>&1; do echo waiting for keycloak jwks; sleep 3; done"]
+      containers:
+        - name: agentgateway
+          image: {{ .Values.thirdParty.agentgateway | quote }}
+          args: ["-f", "/config/config.yaml"]
+          ports:
+            - { name: http, containerPort: 4000 }
+            - { name: metrics, containerPort: 15020 }
+            - { name: readiness, containerPort: 15021 }
+          volumeMounts:
+            - { name: config, mountPath: /config, readOnly: true }
+          readinessProbe:
+            httpGet: { path: /healthz/ready, port: readiness }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz/ready, port: readiness }
+            periodSeconds: 30
+          resources: {{ toYaml .Values.resources.gateway | nindent 12 }}
+      volumes:
+        - name: config
+          configMap: { name: fleet-gateway-config }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fleet-gateway
+  namespace: maestro-gateway
+  labels: { app: fleet-gateway }
+spec:
+  type: NodePort
+  selector: { app: fleet-gateway }
+  ports:
+    - { name: http, port: 80, targetPort: http, nodePort: {{ .Values.ports.fleetGateway }} }
+    - { name: metrics, port: 15020, targetPort: metrics }
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: fleet-gateway
+  namespace: maestro-gateway
+  labels: { app: fleet-gateway }
+spec:
+  selector:
+    matchLabels: { app: fleet-gateway }
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 15s

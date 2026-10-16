@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "maestro-common"
+version = "0.1.0"
+description = "Shared plumbing for the Maestro agent fleet: skills, events, auth, LLM loop, Prometheus."
+requires-python = ">=3.12"
+dependencies = [
+  "mcp==2.3.0",
+  "anthropic==1.15.0",
+  "pyjwt[crypto]==2.15.1",
+  "pyyaml==6.0.3",
+  "httpx2>=2.13,<3",
+  "prometheus-client==0.26.0",
+  "starlette>=1.0,<2",
+  "uvicorn==0.54.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["maestro_common*"]

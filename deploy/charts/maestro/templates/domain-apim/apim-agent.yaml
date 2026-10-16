@@ -1,0 +1,40 @@
+{{- /* The APIM agent reads the edge gateway's ConfigMap through the Kubernetes API (read-only). */ -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: apim-agent
+  namespace: domain-apim
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: apim-agent-config-reader
+  namespace: domain-apim
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: apim-agent-config-reader
+  namespace: domain-apim
+subjects:
+  - { kind: ServiceAccount, name: apim-agent, namespace: domain-apim }
+roleRef:
+  kind: Role
+  name: apim-agent-config-reader
+  apiGroup: rbac.authorization.k8s.io
+---
+{{ include "maestro.domainAgent" (dict
+  "root" .
+  "name" "apim-agent"
+  "namespace" "domain-apim"
+  "domain" "apim"
+  "skills" "apim-observability,prometheus-observability"
+  "serviceAccount" "apim-agent"
+  "extraEnv" (list
+    (dict "name" "EDGE_GATEWAY_URL" "value" "http://edge-gateway.domain-apim")
+    (dict "name" "EDGE_CONFIGMAP" "value" "domain-apim/edge-gateway-config")
+    (dict "name" "EDGE_METRICS_URL" "value" "http://edge-gateway.domain-apim:15020/metrics"))) }}

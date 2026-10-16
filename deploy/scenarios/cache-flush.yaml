@@ -1,0 +1,22 @@
+# Clears the cache-pressure scenario's keyspace. One-shot; deleted after completion.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cache-flush
+  namespace: domain-cache
+  labels: { app: cache-flush, maestro.io/scenario: cache-pressure }
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 30
+  template:
+    metadata:
+      labels: { app: cache-flush }
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: flush
+          image: valkey/valkey:9.1.2
+          command: ["valkey-cli", "-h", "valkey.domain-cache", "-p", "6379", "FLUSHALL"]
+          resources:
+            requests: { cpu: 20m, memory: 16Mi }
+            limits: { memory: 64Mi }

@@ -1,0 +1,94 @@
+# Values for prometheus-community/kube-prometheus-stack, release name `monitoring`
+# in namespace `maestro-monitoring` (ADR-0006). Service names that other components rely on:
+#   monitoring-kube-prometheus-prometheus:9090   (fullname is "<release>-kube-prometheus", chart truncates to 26 chars)
+#   monitoring-grafana:80
+# Keep the RAM footprint small: no Alertmanager, 2h retention, no admission webhooks.
+
+fullnameOverride: ""   # keep the default naming above; do not set, or service names change
+
+alertmanager:
+  enabled: false
+
+defaultRules:
+  create: false
+
+prometheusOperator:
+  admissionWebhooks:
+    enabled: false
+  tls:
+    enabled: false
+  resources:
+    requests: { cpu: 50m, memory: 96Mi }
+    limits: { memory: 256Mi }
+
+prometheus:
+  service:
+    type: NodePort
+    nodePort: 30084
+  prometheusSpec:
+    retention: 2h
+    retentionSize: 1GB
+    scrapeInterval: 15s
+    evaluationInterval: 30s
+    # Discover every ServiceMonitor/PodMonitor in every namespace, not only the chart's own.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    probeSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    serviceMonitorNamespaceSelector: {}
+    podMonitorNamespaceSelector: {}
+    resources:
+      requests: { cpu: 200m, memory: 512Mi }
+      limits: { memory: 1Gi }
+
+grafana:
+  enabled: true
+  adminUser: admin
+  adminPassword: maestro-demo
+  defaultDashboardsEnabled: false
+  service:
+    type: NodePort
+    nodePort: 30081
+  grafana.ini:
+    auth.anonymous:
+      enabled: true
+      org_role: Viewer
+    security:
+      allow_embedding: true
+    analytics:
+      check_for_updates: false
+      reporting_enabled: false
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      searchNamespace: ALL
+      folderAnnotation: grafana_folder
+      provider:
+        foldersFromFilesStructure: true
+    datasources:
+      enabled: true
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 384Mi }
+
+kube-state-metrics:
+  resources:
+    requests: { cpu: 20m, memory: 48Mi }
+    limits: { memory: 128Mi }
+
+prometheus-node-exporter:
+  resources:
+    requests: { cpu: 20m, memory: 32Mi }
+    limits: { memory: 64Mi }
+
+# KIND has no separate control-plane components to scrape on their usual ports; silence the noise.
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeProxy:
+  enabled: false
+kubeEtcd:
+  enabled: false

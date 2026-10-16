@@ -1,0 +1,6 @@
+apiVersion: v2
+name: maestro
+description: Maestro — an agent of agents for observability. First-party services, domain platforms, identity and gateways in one release.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

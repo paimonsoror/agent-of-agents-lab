@@ -1,0 +1,96 @@
+{{- /*
+Keycloak in dev mode with the realm imported at start (ADR-0005). In-memory H2, so every
+`make up` reproduces the identical realm. KC_HOSTNAME pins the issuer to the public URL so a
+token fetched in-cluster carries the same `iss` as one fetched from a laptop.
+*/ -}}
+{{- if not .Values.keycloak.realmJson }}
+{{- fail "keycloak.realmJson is empty: pass --set-file keycloak.realmJson=deploy/keycloak/realm.json" }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-realm
+  namespace: maestro-identity
+data:
+  realm.json: |-
+{{ .Values.keycloak.realmJson | indent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+  namespace: maestro-identity
+  labels: { app: keycloak }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: keycloak }
+  template:
+    metadata:
+      labels: { app: keycloak }
+      annotations:
+        checksum/realm: {{ .Values.keycloak.realmJson | sha256sum }}
+    spec:
+      containers:
+        - name: keycloak
+          image: {{ .Values.thirdParty.keycloak | quote }}
+          args: ["start-dev", "--import-realm"]
+          env:
+            - { name: KC_BOOTSTRAP_ADMIN_USERNAME, value: {{ .Values.keycloak.adminUser | quote }} }
+            - { name: KC_BOOTSTRAP_ADMIN_PASSWORD, value: {{ .Values.keycloak.adminPassword | quote }} }
+            - name: KC_HOSTNAME
+              value: {{ include "maestro.publicUrl" (dict "root" . "port" .Values.ports.keycloak) | quote }}
+            - { name: KC_HOSTNAME_STRICT, value: "false" }
+            - { name: KC_HTTP_ENABLED, value: "true" }
+            - { name: KC_HEALTH_ENABLED, value: "true" }
+            - { name: KC_METRICS_ENABLED, value: "true" }
+            - { name: KC_LOG_LEVEL, value: "info" }
+            - { name: JAVA_OPTS_KC_HEAP, value: "-Xms256m -Xmx512m" }
+          ports:
+            - { name: http, containerPort: 8080 }
+            - { name: mgmt, containerPort: 9000 }
+          volumeMounts:
+            - { name: realm, mountPath: /opt/keycloak/data/import, readOnly: true }
+          startupProbe:
+            httpGet: { path: /realms/maestro, port: http }
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: { path: /realms/maestro, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health/live, port: mgmt }
+            periodSeconds: 30
+            failureThreshold: 5
+          resources: {{ toYaml .Values.resources.keycloak | nindent 12 }}
+      volumes:
+        - name: realm
+          configMap: { name: keycloak-realm }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+  namespace: maestro-identity
+  labels: { app: keycloak }
+spec:
+  type: NodePort
+  selector: { app: keycloak }
+  ports:
+    - { name: http, port: 8080, targetPort: http, nodePort: {{ .Values.ports.keycloak }} }
+    - { name: mgmt, port: 9000, targetPort: mgmt }
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: keycloak
+  namespace: maestro-identity
+  labels: { app: keycloak }
+spec:
+  selector:
+    matchLabels: { app: keycloak }
+  endpoints:
+    - port: mgmt
+      path: /metrics
+      interval: 30s

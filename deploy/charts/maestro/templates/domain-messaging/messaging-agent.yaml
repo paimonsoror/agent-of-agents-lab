@@ -1,0 +1,11 @@
+{{ include "maestro.domainAgent" (dict
+  "root" .
+  "name" "messaging-agent"
+  "namespace" "domain-messaging"
+  "domain" "messaging"
+  "skills" "messaging-observability,prometheus-observability"
+  "serviceAccount" ""
+  "extraEnv" (list
+    (dict "name" "KAFKA_BOOTSTRAP" "value" "kafka.domain-messaging:9092")
+    (dict "name" "KAFKA_TOPIC" "value" .Values.kafka.topic)
+    (dict "name" "KAFKA_CONSUMER_GROUP" "value" .Values.kafka.consumerGroup))) }}
