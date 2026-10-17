@@ -36,31 +36,25 @@
 <section id="identity">
   <div class="wrap">
     <span class="eyebrow">Identity and trust</span>
-    <h2>Token propagation, not token minting</h2>
+    <h2>Delegation, not propagation and not minting</h2>
     <div class="split">
       <div>
         <p>Every service that calls another presents a JWT issued by Keycloak. Services are OAuth clients with service accounts (non-human identities); engineers are realm users. Roles live in <code>realm_access.roles</code>.</p>
-        <p><b>Maestro forwards the caller's token</b> to the domain agents. It never mints its own for downstream calls, so authorisation is end-to-end per caller and Maestro cannot escalate on anyone's behalf. Non-human identity stays in one place (Keycloak) with one mechanism (JWT). That is the explicit reason the lab starts with MCP rather than A2A.</p>
-        <p>The gateway is the policy enforcement point: JWT validation against Keycloak's JWKS, tool-level RBAC, metrics, audit. Domain agents verify the same token again, so bypassing the gateway buys nothing.</p>
-        <p class="muted"><a href="decisions.html">ADR-0005</a> · <a href="decisions.html">ADR-0004</a></p>
+        <p><b>An agent should not hold the caller's rights.</b> Before each agent call, Maestro asks Keycloak to exchange the caller's token (RFC 8693) for an <b>on-behalf-of token</b>: same subject, but addressed to that one agent, carrying that one domain role, valid five minutes, with Maestro recorded as the carrier. Keycloak refuses to delegate a role the caller lacks, so authorisation stays end-to-end per caller and Maestro still cannot escalate. Non-human identity stays in one place (Keycloak) with one mechanism (JWT), which is why the lab starts with MCP rather than A2A.</p>
+        <p>The gateway is the policy enforcement point: JWT validation against Keycloak's JWKS, tool-level RBAC on the roles the badge carries, metrics, audit. Each domain agent verifies the token again and insists it is addressed to it, so bypassing the gateway, or re-using a token minted for another agent, buys nothing.</p>
+        <p class="muted"><a href="identity.html">The full story, animated →</a> · <a href="decisions.html">ADR-0015</a> · <a href="decisions.html">ADR-0005</a> · <a href="decisions.html">ADR-0004</a></p>
       </div>
       <div class="token-stage reveal">
-        <div class="hops" id="hops">
-          <div class="hop" data-h="0"><i data-icon="console"></i><br>Fleet Console<small>obtains JWT</small></div>
-          <div class="hop" data-h="1"><i data-icon="maestro"></i><br>Maestro<small>forwards it</small></div>
-          <div class="hop" data-h="2"><i data-icon="gateway"></i><br>Gateway<small>validates · authorises</small></div>
-          <div class="hop" data-h="3"><i data-icon="agent"></i><br>Domain agent<small>verifies again</small></div>
+        <div class="hops hops-5" id="hops">
+          <div class="hop" data-h="0"><i data-icon="console"></i><br>Fleet Console<small>obtains its JWT</small></div>
+          <div class="hop" data-h="1"><i data-icon="maestro"></i><br>Maestro<small>receives it</small></div>
+          <div class="hop" data-h="2"><i data-icon="keycloak"></i><br>Keycloak<small>exchanges it</small></div>
+          <div class="hop" data-h="3"><i data-icon="gateway"></i><br>Gateway<small>checks the role</small></div>
+          <div class="hop" data-h="4"><i data-icon="agent"></i><br>cache-agent<small>checks the audience</small></div>
           <span class="jwt" id="jwt">eyJhbGciOi… JWT</span>
         </div>
-        <div class="claims" id="claims">{
-  "iss": "http://&lt;host&gt;:30082/realms/maestro",
-  "aud": "maestro-gateway",
-  "sub": "service-account-fleet-console",
-  "realm_access": { "roles": [ "maestro:ask",
-     "domain:apim", "domain:cache", "domain:messaging" ] },
-  "exp": "+8h"
-}</div>
-        <p class="muted" style="margin:10px 0 0;font-size:.82rem" id="hop-note">The same token, unchanged, at every hop.</p>
+        <div class="claims" id="claims"></div>
+        <p class="muted" style="margin:10px 0 0;font-size:.82rem" id="hop-note"></p>
       </div>
     </div>
   </div>
@@ -139,18 +133,45 @@
 
 <script>
 (function () {
-  // Token hop animation
-  const hops = Array.from(document.querySelectorAll(".hop")), jwt = document.getElementById("jwt"), note = document.getElementById("hop-note");
-  const NOTES = ["The console obtains the token with its own client credentials.", "Maestro forwards the caller's token. It never mints one.", "The gateway checks iss, aud, exp against Keycloak's JWKS, then the CEL rule for the tool.", "The agent verifies the same token again and logs who asked."];
+  // Token hop animation: the caller's token up to Keycloak, the on-behalf-of token after it (ADR-0015).
+  const hops = Array.from(document.querySelectorAll(".hop")), jwt = document.getElementById("jwt"), note = document.getElementById("hop-note"), claims = document.getElementById("claims");
+  const CALLER = `{
+  "iss": "http://<host>:30082/realms/maestro",
+  "aud": ["maestro-gateway", "maestro"],
+  "sub": "service-account-fleet-console",
+  "azp": "fleet-console",
+  "realm_access": { "roles": [ "maestro:ask",
+     "domain:apim", "domain:cache", "domain:messaging" ] },
+  "exp": "+8 h"
+}`;
+  const OBO = `{
+  "iss": "http://<host>:30082/realms/maestro",
+  "aud": "cache-agent",
+  "sub": "service-account-fleet-console",
+  "azp": "maestro",  "act": { "client_id": "maestro" },
+  "realm_access": { "roles": [ "domain:cache" ] },
+  "exp": "+300 s"
+}`;
+  const NOTES = [
+    "The console obtains its own token with its client credentials: every door it holds, for eight hours.",
+    "Maestro receives that token. It will not hand it to an agent.",
+    "Maestro asks Keycloak for a token on behalf of the caller, for cache-agent only. Keycloak checks the caller holds domain:cache and issues a five-minute badge that names Maestro as carrier.",
+    "The gateway checks iss, aud and signature against Keycloak's JWKS, then the CEL rule: the badge carries domain:cache, so cache tools only.",
+    "cache-agent verifies the token again and insists aud is cache-agent. It records who it worked for and who carried the badge.",
+  ];
   let h = 0;
   function place() {
     hops.forEach((e, i) => e.classList.toggle("lit", i === h));
     const r = hops[h].getBoundingClientRect(), p = hops[h].parentElement.getBoundingClientRect();
     jwt.style.left = (r.left - p.left + r.width / 2) + "px";
+    const obo = h >= 2;
+    jwt.textContent = obo ? "eyJhbGciOi… on-behalf-of JWT" : "eyJhbGciOi… caller's JWT";
+    jwt.classList.toggle("obo", obo);
+    claims.textContent = obo ? OBO : CALLER;
     note.textContent = NOTES[h];
   }
   place();
-  setInterval(() => { h = (h + 1) % hops.length; place(); }, 1800);
+  setInterval(() => { h = (h + 1) % hops.length; place(); }, 2600);
   window.addEventListener("resize", place);
 
   // RBAC tool filter

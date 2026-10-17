@@ -26,7 +26,14 @@ spec:
               value: maestro-orchestration
             - name: FLEET_GATEWAY_MCP_URL
               value: http://fleet-gateway.maestro-gateway/agents/mcp
-            {{- include "maestro.commonEnv" (dict "root" . "service" "maestro") | nindent 12 }}
+            # ADR-0015: Maestro's own client identity, used ONLY to perform token exchange (never to call an agent as itself).
+            - name: OIDC_CLIENT_ID
+              value: maestro
+            - name: OIDC_CLIENT_SECRET
+              value: {{ .Values.identity.maestroClientSecret | quote }}
+            - name: MAESTRO_AUTH_MODE
+              value: {{ .Values.identity.delegation | quote }}
+            {{- include "maestro.commonEnv" (dict "root" . "service" "maestro" "audience" "maestro,maestro-gateway") | nindent 12 }}
             {{- include "maestro.llmEnv" (dict "root" . "model" .Values.llm.maestroModel "effort" .Values.llm.maestroEffort) | nindent 12 }}
           {{- include "maestro.httpProbes" 8000 | nindent 10 }}
           resources: {{ toYaml .Values.resources.maestro | nindent 12 }}

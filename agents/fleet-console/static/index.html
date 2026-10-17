@@ -4,7 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Maestro Fleet Console</title>
-  <link rel="stylesheet" href="/styles.css">
+  <!-- ?v= busts browser caches of the static assets when the console image changes; bump it with the assets. -->
+  <link rel="stylesheet" href="/styles.css?v=obo1">
 </head>
 <body>
   <header class="topbar">
@@ -23,6 +24,7 @@
         <span class="chip-elapsed" id="trace-elapsed"></span>
       </div>
       <button class="btn ghost" id="how-it-works" title="The eight steps of every request">How it works</button>
+      <button class="btn ghost" id="identity-btn" title="Who holds which badge: on-behalf-of tokens, live against Keycloak">Identity</button>
       <button class="btn ghost" id="theme-toggle" title="Toggle light / dark">☾</button>
     </div>
   </header>
@@ -46,6 +48,13 @@
         <label>Title <input id="inc-title" value="Member portal API returning 503s"></label>
         <label>Service <input id="inc-service" value="member-portal"></label>
         <label>Description <textarea id="inc-desc" rows="2">Members report errors on login and account pages since ~10 minutes ago. Error rate climbing.</textarea></label>
+        <label title="How Maestro authenticates to the domain agents for this request (ADR-0015)">Delegation
+          <select id="auth-mode">
+            <option value="">On behalf of · one badge per agent (default)</option>
+            <option value="exchange">On behalf of · token exchange</option>
+            <option value="passthrough">Passthrough · caller's own token (legacy)</option>
+          </select>
+        </label>
         <button class="btn danger big" id="raise-incident">Raise P1 incident</button>
       </section>
 
@@ -65,6 +74,7 @@
       <section class="card legend">
         <h2>Legend</h2>
         <div><i class="dot c-incident"></i> incident signal</div>
+        <div><i class="dot c-identity"></i> identity · token issued or exchanged</div>
         <div><i class="dot c-request"></i> request via gateway (JWT)</div>
         <div><i class="dot c-skills"></i> skills loaded</div>
         <div><i class="dot c-evidence"></i> evidence gathered</div>
@@ -118,9 +128,9 @@
     </div>
   </section>
 
-  <script src="/topology.js"></script>
-  <script src="/icons.js"></script>
-  <script src="/drawer.js"></script>
-  <script src="/app.js"></script>
+  <script src="/topology.js?v=obo1"></script>
+  <script src="/icons.js?v=obo1"></script>
+  <script src="/drawer.js?v=obo1"></script>
+  <script src="/app.js?v=obo1"></script>
 </body>
 </html>

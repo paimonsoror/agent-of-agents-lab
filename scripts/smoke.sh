@@ -19,39 +19,76 @@ ok()   { printf '  \033[1;32mPASS\033[0m %s\n' "$*"; }
 bad()  { printf '  \033[1;31mFAIL\033[0m %s\n' "$*"; fail=1; }
 
 log "smoke: identity"
+claims_of() { echo "$1" | cut -d. -f2 | tr '_-' '/+' | awk '{l=length($0)%4; if(l==2)print $0"=="; else if(l==3)print $0"="; else print $0}' | base64 -d 2>/dev/null; }
 T_CONSOLE="$(token_client_credentials fleet-console fleet-console-secret || true)"
 T_SRE="$(token_password sre-lead sre-lead || true)"
 T_ENG="$(token_password engineer engineer || true)"
 for p in "fleet-console:$T_CONSOLE" "sre-lead:$T_SRE" "engineer:$T_ENG"; do
   name="${p%%:*}"; tok="${p#*:}"
   if [[ -n "$tok" && "$tok" != "null" ]]; then
-    claims="$(echo "$tok" | cut -d. -f2 | tr '_-' '/+' | awk '{l=length($0)%4; if(l==2)print $0"=="; else if(l==3)print $0"="; else print $0}' | base64 -d 2>/dev/null)"
+    claims="$(claims_of "$tok")"
     iss="$(echo "$claims" | jq -r .iss)"; aud="$(echo "$claims" | jq -r '[.aud] | flatten | join(",")')"
-    if [[ "$iss" == "${KC}/realms/maestro" ]] && echo "$aud" | grep -q maestro-gateway; then
-      ok "token for $name (iss=$iss aud=$aud roles=$(echo "$claims" | jq -c .realm_access.roles))"
+    roles="$(echo "$claims" | jq -c '.realm_access.roles // []')"
+    # A token without maestro:ask means the realm import lost its built-in client scopes (ADR-0015 import gotcha).
+    if [[ "$iss" == "${KC}/realms/maestro" ]] && echo "$aud" | grep -q maestro-gateway && echo ",$aud," | grep -q ",maestro," && echo "$roles" | grep -q 'maestro:ask'; then
+      ok "token for $name (iss=$iss aud=$aud roles=$roles)"
     else
-      bad "token for $name has iss=$iss aud=$aud (expected iss=${KC}/realms/maestro, aud containing maestro-gateway)"
+      bad "token for $name has iss=$iss aud=$aud roles=$roles (expected iss=${KC}/realms/maestro, aud containing maestro-gateway and maestro, roles containing maestro:ask)"
     fi
   else
     bad "could not obtain token for $name"
   fi
 done
 
+log "smoke: on-behalf-of delegation (token exchange, ADR-0015)"
+# Maestro's exchange, replayed with Maestro's own (public demo) client credentials.
+exchange() { # $1=subject token $2=audience $3=scope -> JSON response
+  curl -sS -X POST "${KC}/realms/maestro/protocol/openid-connect/token" -d client_id=maestro -d client_secret=maestro-secret \
+    -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange -d "subject_token=$1" \
+    -d subject_token_type=urn:ietf:params:oauth:token-type:access_token -d requested_token_type=urn:ietf:params:oauth:token-type:access_token \
+    -d "audience=$2" -d "scope=$3" || true
+}
+resp="$(exchange "$T_ENG" apim-agent domain-apim)"
+T_OBO_APIM="$(echo "$resp" | jq -r '.access_token // empty')"
+if [[ -n "$T_OBO_APIM" ]]; then
+  c="$(claims_of "$T_OBO_APIM")"
+  aud="$(echo "$c" | jq -r '[.aud] | flatten | join(",")')"; azp="$(echo "$c" | jq -r .azp)"; act="$(echo "$c" | jq -r '.act.client_id // ""')"
+  roles="$(echo "$c" | jq -c '.realm_access.roles // []')"; life="$(echo "$c" | jq -r '.exp - .iat')"; sub_user="$(echo "$c" | jq -r .preferred_username)"
+  if [[ "$aud" == "apim-agent" && "$azp" == "maestro" && "$act" == "maestro" && "$roles" == '["domain:apim"]' && "$sub_user" == "engineer" && "$life" -le 300 ]]; then
+    ok "engineer → apim-agent: on-behalf-of token (sub=$sub_user azp=$azp act=$act aud=$aud roles=$roles lifetime=${life}s)"
+  else
+    bad "engineer → apim-agent token has unexpected claims (sub=$sub_user azp=$azp act=$act aud=$aud roles=$roles lifetime=${life}s)"
+  fi
+else
+  bad "engineer → apim-agent exchange failed: $resp"
+fi
+resp="$(exchange "$T_ENG" messaging-agent domain-messaging)"
+if echo "$resp" | jq -e '.error' >/dev/null 2>&1 && ! echo "$resp" | jq -e '.access_token' >/dev/null 2>&1; then
+  ok "engineer → messaging-agent: Keycloak refused to delegate ($(echo "$resp" | jq -r .error_description))"
+else
+  bad "engineer → messaging-agent exchange should be refused (engineer lacks domain:messaging); got: $resp"
+fi
+resp="$(exchange "$T_SRE" messaging-agent domain-messaging)"
+echo "$resp" | jq -e '.access_token' >/dev/null 2>&1 && ok "sre-lead → messaging-agent: delegated" || bad "sre-lead → messaging-agent exchange failed: $resp"
+resp="$(exchange "$T_ENG" cache-agent domain-cache)"
+T_OBO_CACHE="$(echo "$resp" | jq -r '.access_token // empty')"
+[[ -n "$T_OBO_CACHE" ]] || bad "engineer → cache-agent exchange failed: $resp"
+
 # Minimal MCP client over curl: initialize -> notifications/initialized -> tools/list. Handles JSON or SSE replies.
-mcp_tools() { # $1=token  -> prints tool names, one per line; empty on auth failure
-  local tok="$1" hdrs sid body
+mcp_tools() { # $1=token [$2=path, default /agents/mcp] -> prints tool names, one per line; empty on auth failure
+  local tok="$1" path="${2:-/agents/mcp}" hdrs sid body
   hdrs="$(mktemp)"
-  body="$(curl -sS -D "$hdrs" -X POST "${GW}/agents/mcp" \
+  body="$(curl -sS -D "$hdrs" -X POST "${GW}${path}" \
     -H "Authorization: Bearer $tok" -H 'Content-Type: application/json' \
     -H 'Accept: application/json, text/event-stream' -H 'MCP-Protocol-Version: 2025-06-18' \
     -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}' || true)"
   sid="$(grep -i '^mcp-session-id:' "$hdrs" | awk '{print $2}' | tr -d '\r' || true)"
   rm -f "$hdrs"
   local sid_hdr=(); [[ -n "$sid" ]] && sid_hdr=(-H "Mcp-Session-Id: $sid")
-  curl -sS -o /dev/null -X POST "${GW}/agents/mcp" -H "Authorization: Bearer $tok" -H 'Content-Type: application/json' \
+  curl -sS -o /dev/null -X POST "${GW}${path}" -H "Authorization: Bearer $tok" -H 'Content-Type: application/json' \
     -H 'Accept: application/json, text/event-stream' -H 'MCP-Protocol-Version: 2025-06-18' "${sid_hdr[@]}" \
     -d '{"jsonrpc":"2.0","method":"notifications/initialized"}' || true
-  curl -sS -X POST "${GW}/agents/mcp" -H "Authorization: Bearer $tok" -H 'Content-Type: application/json' \
+  curl -sS -X POST "${GW}${path}" -H "Authorization: Bearer $tok" -H 'Content-Type: application/json' \
     -H 'Accept: application/json, text/event-stream' -H 'MCP-Protocol-Version: 2025-06-18' "${sid_hdr[@]}" \
     -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \
     | sed -n 's/^data: //p; /^{/p' | jq -r '.result.tools[]?.name' 2>/dev/null | sort -u
@@ -73,6 +110,22 @@ for t in apim_assess cache_assess messaging_assess; do
 done
 echo "$eng_tools" | grep -qx "messaging_assess" && bad "engineer sees messaging_assess (should be filtered)" || ok "engineer cannot see messaging_assess"
 echo "$eng_tools" | grep -qx "cache_assess" && ok "engineer sees cache_assess" || bad "engineer does not see cache_assess (saw: $(echo "$eng_tools" | tr '\n' ' '))"
+# An on-behalf-of token for cache-agent opens exactly one door: Maestro's per-agent route for cache
+# accepts it; the per-agent route for apim (and apim-agent itself) refuses it (ADR-0015).
+if [[ -n "${T_OBO_CACHE:-}" ]]; then
+  # The gateway re-reads its ConfigMap-mounted config up to ~a minute after a rollout; poll the new route.
+  obo_tools=""
+  for _ in $(seq 1 12); do
+    obo_tools="$(mcp_tools "$T_OBO_CACHE" /agents/cache/mcp)"
+    [[ -n "$obo_tools" ]] && break
+    sleep 5
+  done
+  echo "$obo_tools" | grep -qE "^(cache_)?assess$" && ok "on-behalf-of token for cache-agent is accepted on /agents/cache/mcp (tools: $(echo "$obo_tools" | tr '\n' ' '))" || bad "on-behalf-of token for cache-agent not accepted on /agents/cache/mcp (saw: $(echo "$obo_tools" | tr '\n' ' '))"
+  other_tools="$(mcp_tools "$T_OBO_CACHE" /agents/apim/mcp)"
+  [[ -z "$other_tools" ]] && ok "on-behalf-of token for cache-agent is refused on /agents/apim/mcp" || bad "on-behalf-of token for cache-agent opened the apim route (saw: $(echo "$other_tools" | tr '\n' ' '))"
+  eng_cache_tools="$(mcp_tools "$T_ENG" /agents/cache/mcp)"
+  [[ -n "$eng_cache_tools" ]] && ok "engineer's own token also works on /agents/cache/mcp (passthrough mode)" || bad "engineer's own token refused on /agents/cache/mcp"
+fi
 
 log "smoke: shared monitoring"
 # Pods that just rolled take a scrape interval or two to show as 'up'; poll before judging.

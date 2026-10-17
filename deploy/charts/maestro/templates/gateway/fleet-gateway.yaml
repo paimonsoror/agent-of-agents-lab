@@ -37,7 +37,10 @@ data:
         jwtAuth:
           mode: strict
           issuer: {{ $issuer }}
-          audiences: [maestro-gateway]
+          # A direct caller's token is addressed to the gateway; Maestro's on-behalf-of tokens are addressed
+          # to exactly one agent (ADR-0015). Any one of these audiences satisfies the gateway; the agent
+          # behind the target then insists on its own name.
+          audiences: [maestro-gateway, apim-agent, cache-agent, messaging-agent]
           jwks:
             url: {{ $jwks }}
         backendAuth:
@@ -47,6 +50,8 @@ data:
         timeout:
           requestTimeout: 600s
           backendRequestTimeout: 600s
+        # Role-based: an on-behalf-of token carries only the one domain role Keycloak scoped it to, so a
+        # token minted for cache-agent cannot list or call apim tools even before reaching the agent.
         mcpAuthorization:
           rules:
           - 'mcp.tool.target == "apim" && "domain:apim" in jwt.realm_access.roles'
@@ -64,6 +69,40 @@ data:
           - name: messaging
             mcp:
               host: http://messaging-agent.domain-messaging:8000/mcp
+    {{- /* One route per agent for Maestro's delegated calls (ADR-0015): an on-behalf-of token is addressed to a
+           single agent, and the multiplexed route above would open a session with every target, so the other
+           agents would (rightly) refuse it. Direct callers keep using the multiplexed /agents/mcp. */}}
+    {{- range $d := list "apim" "cache" "messaging" }}
+    - name: agent-{{ $d }}
+      matches:
+      - path:
+          pathPrefix: /agents/{{ $d }}/mcp
+      policies:
+        cors:
+          allowOrigins: ["*"]
+          allowHeaders: [mcp-protocol-version, content-type, cache-control, mcp-session-id, authorization]
+          exposeHeaders: [Mcp-Session-Id]
+        jwtAuth:
+          mode: strict
+          issuer: {{ $issuer }}
+          audiences: [{{ $d }}-agent, maestro-gateway]
+          jwks:
+            url: {{ $jwks }}
+        backendAuth:
+          passthrough: {}
+        timeout:
+          requestTimeout: 600s
+          backendRequestTimeout: 600s
+        mcpAuthorization:
+          rules:
+          - '"domain:{{ $d }}" in jwt.realm_access.roles'
+      backends:
+      - mcp:
+          targets:
+          - name: {{ $d }}
+            mcp:
+              host: http://{{ $d }}-agent.domain-{{ $d }}:8000/mcp
+    {{- end }}
     - name: maestro
       matches:
       - path:
@@ -76,7 +115,7 @@ data:
         jwtAuth:
           mode: strict
           issuer: {{ $issuer }}
-          audiences: [maestro-gateway]
+          audiences: [maestro-gateway, maestro]
           jwks:
             url: {{ $jwks }}
         backendAuth:
@@ -110,7 +149,10 @@ spec:
     metadata:
       labels: { app: fleet-gateway }
       annotations:
-        checksum/config: {{ printf "%s%s" $issuer $jwks | sha256sum }}
+        # Includes the realm: Keycloak re-imports into a fresh in-memory DB on every realm change and mints new
+        # signing keys, and agentgateway only fetches JWKS at start. Rolling the gateway with the realm (its init
+        # container waits for the new JWKS) keeps the keys in step (ADR-0015).
+        checksum/config: {{ printf "%s%s%s%s" $issuer $jwks "aud-v2" (.Values.keycloak.realmJson | sha256sum) | sha256sum }}
     spec:
       initContainers:
         - name: wait-for-keycloak

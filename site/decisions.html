@@ -49,7 +49,7 @@
     ["0002", "kind-on-a-single-vm", "Run the whole ecosystem in KIND on a single VM", "One VM, one cluster, fixed NodePort → host-port mappings 30080–30085. Fits in 15 GiB."],
     ["0003", "agentgateway-as-fleet-gateway", "agentgateway is the fleet (MCP/AI) gateway", "The only open-source gateway that is MCP- and A2A-native with JWT validation and per-tool RBAC; run as plain Deployments."],
     ["0004", "mcp-with-jwt-today-a2a-north-star", "MCP with JWT propagation today; A2A is the north star", "Keeps non-human identity to one place and one mechanism now; the gateway already routes A2A for later."],
-    ["0005", "keycloak-identity-and-token-propagation", "Keycloak issues identities; callers' tokens are propagated, not re-minted", "Services are OAuth clients with service accounts; Maestro cannot escalate."],
+    ["0005", "keycloak-identity-and-token-propagation", "Keycloak issues identities; callers' tokens are propagated, not re-minted", "Services are OAuth clients with service accounts; Maestro cannot escalate. Propagation itself is superseded by ADR-0015."],
     ["0006", "prometheus-grafana-shared-monitoring", "Prometheus + Grafana are the shared monitoring every domain sends to", "Native exporters everywhere; agents query PromQL and cite dashboard panels by deep link."],
     ["0007", "skills-md-as-agent-cognition", "Agent cognition lives in agentskills.io SKILL.md bundles", "Domain teams own their agent's knowledge as Markdown; progressive disclosure via references."],
     ["0008", "domain-agent-contract", "Every domain agent exposes the same assess contract and recommends, never remediates", "One Finding schema; agents are read-only by design."],
@@ -59,6 +59,7 @@
     ["0012", "idempotent-build", "One idempotent make up; one destructive make down", "Content-hash image tags, Helm convergence, a smoke test that proves the stack."],
     ["0013", "domain-platform-stand-ins", "Open-source stand-ins for the domain platforms", "agentgateway as the edge, Valkey for cache, Kafka for messaging; each with native Prometheus export."],
     ["0014", "github-pages-site", "A static GitHub Pages site explains the lab", "Vanilla HTML/CSS/JS under site/, deployed by a workflow; no build step, mirrors the docs."],
+    ["0015", "on-behalf-of-token-exchange", "Maestro presents on-behalf-of tokens obtained by token exchange", "Agents never hold the caller's badge: RFC 8693 exchange at Keycloak yields a per-agent, one-role, five-minute token that names the person and Maestro as carrier."],
   ];
   document.getElementById("adrs").innerHTML = ADRS.map(([n, slug, title, why], i) =>
     `<a class="adr reveal" style="transition-delay:${Math.min(i, 6) * 40}ms" href="${BASE}${n}-${slug}.md" rel="noopener"><span class="num">ADR-${n}</span><span><b>${title}</b><p>${why}</p></span><span class="pill ok">Accepted</span></a>`).join("");

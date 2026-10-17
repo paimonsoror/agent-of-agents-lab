@@ -29,6 +29,7 @@ window.MaestroTopology = (function () {
     { id: "ide-gateway", from: "ide", to: "gateway" },
     { id: "maestro-skills", from: "maestro", to: "skills", kind: "v", dashed: true },
     { id: "maestro-gateway", from: "maestro", to: "gateway" },
+    { id: "maestro-keycloak", from: "maestro", to: "keycloak", kind: "mk", dashed: true },
     { id: "gateway-keycloak", from: "gateway", to: "keycloak", kind: "gk", dashed: true },
     { id: "gateway-apim", from: "gateway", to: "apim-agent" },
     { id: "gateway-cache", from: "gateway", to: "cache-agent" },
@@ -56,6 +57,10 @@ window.MaestroTopology = (function () {
       const up = b.y < a.y;
       const y1 = a.y + (up ? -NH / 2 : NH / 2), y2 = b.y + (up ? NH / 2 : -NH / 2);
       return `M${a.x},${y1} C${a.x},${(y1 + y2) / 2} ${b.x},${(y1 + y2) / 2} ${b.x},${y2}`;
+    }
+    if (e.kind === "mk") { // maestro left-bottom → keycloak top-right (the token-exchange hop, ADR-0015)
+      const x1 = a.x - NW / 2, y1 = a.y + 14, x2 = b.x + NW / 2 - 10, y2 = b.y - NH / 2;
+      return `M${x1},${y1} C${x1 - 50},${y1 + 10} ${x2 + 10},${y2 - 60} ${x2},${y2}`;
     }
     if (e.kind === "gk") { // gateway bottom → keycloak right, a wide curve under maestro/skills
       const x1 = a.x, y1 = a.y + NH / 2, x2 = b.x + NW / 2, y2 = b.y;
@@ -191,9 +196,16 @@ window.MaestroTopology = (function () {
     await t.flow("maestro-gateway", { reverse: true, duration: 600 });
 
     on(3);
-    await t.flow("maestro-gateway", { color: gold, duration: 600 });
+    // One on-behalf-of token per agent (ADR-0015): Maestro ↔ Keycloak, then the fan-out with those tokens.
+    const obo = "var(--accent)";
+    await t.flow("maestro-keycloak", { color: gold, duration: 550 });
+    t.setState("keycloak", "active");
+    await t.flow("maestro-keycloak", { reverse: true, color: obo, duration: 550 });
+    t.badge("keycloak", `${consulted.length} on-behalf-of tokens`, "accent");
+    await t.flow("maestro-gateway", { color: obo, duration: 600 });
     consulted.forEach(d => t.setState(`${d}-agent`, "pulse active"));
-    await t.flowAll(consulted.map(d => `gateway-${d}`), { color: gold });
+    await t.flowAll(consulted.map(d => `gateway-${d}`), { color: obo });
+    t.setState("keycloak", "idle");
     await sleep(200);
 
     on(4);

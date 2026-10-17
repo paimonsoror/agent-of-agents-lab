@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
-from maestro_common.auth import client_credentials_token
+from maestro_common.auth import client_credentials_token, password_token
 from maestro_common.config import settings
 from maestro_common.events import new_trace_id
 from maestro_common.metrics import REQUESTS
@@ -28,6 +28,8 @@ log = logging.getLogger("fleet-console")
 logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
 
 MAESTRO_URL = os.environ.get("MAESTRO_URL", "http://maestro.maestro:8000").rstrip("/")
+AUTH_MODES = ("exchange", "passthrough")  # ADR-0015: how Maestro authenticates to the domain agents
+DOMAINS = ("apim", "cache", "messaging")
 STATIC_DIR = Path(__file__).parent / "static"
 RING_SIZE = 2000
 REPLAY_SIZE = 200
@@ -142,7 +144,16 @@ async def stream() -> StreamingResponse:
 
 
 # --- intake ---------------------------------------------------------------------------
-async def _ask_maestro(trace_id: str, question: str) -> None:
+def _auth_mode(body: dict[str, Any]) -> str | None:
+    mode = body.get("auth_mode")
+    if mode is None or mode == "":
+        return None
+    if mode not in AUTH_MODES:
+        raise HTTPException(400, f"auth_mode must be one of {list(AUTH_MODES)}")
+    return str(mode)
+
+
+async def _ask_maestro(trace_id: str, question: str, auth_mode: str | None = None) -> None:
     try:
         token = await client_credentials_token()
         hub.publish("token.issued", "Console identity token issued by Keycloak (client-credentials)",
@@ -151,12 +162,14 @@ async def _ask_maestro(trace_id: str, question: str) -> None:
         hub.publish("error", f"Could not obtain a token from Keycloak: {exc}", trace_id=trace_id, to="keycloak")
         REQUESTS.labels(settings.service_name, "ask", "token_error").inc()
         return
-    hub.publish("request.sent", "Question sent to Maestro with the console's JWT", trace_id=trace_id, to="maestro",
-                detail={"question": question})
+    body: dict[str, Any] = {"question": question, "trace_id": trace_id}
+    if auth_mode:
+        body["auth_mode"] = auth_mode
+    hub.publish("request.sent", "Question sent to Maestro with the console's JWT" + (f" (delegation: {auth_mode})" if auth_mode else ""),
+                trace_id=trace_id, to="maestro", detail={"question": question, "auth_mode": auth_mode or "default"})
     try:
         async with httpx2.AsyncClient(timeout=httpx2.Timeout(600.0, connect=10.0)) as http:
-            resp = await http.post(f"{MAESTRO_URL}/api/ask", json={"question": question, "trace_id": trace_id},
-                                   headers={"Authorization": f"Bearer {token}"})
+            resp = await http.post(f"{MAESTRO_URL}/api/ask", json=body, headers={"Authorization": f"Bearer {token}"})
         resp.raise_for_status()
         assessment = resp.json()
         if isinstance(assessment, dict) and assessment.get("verdict"):
@@ -179,9 +192,11 @@ async def raise_incident(body: dict[str, Any]) -> dict[str, str]:
     trace_id = new_trace_id()
     question = (f"P1 {inc}: {title} — service {service}. {description} "
                 "Determine which domains are implicated and recommend the next step.").replace("  ", " ")
+    auth_mode = _auth_mode(body)
     hub.publish("incident.raised", f"P1 {inc} raised: {title}", trace_id=trace_id, to="maestro",
-                detail={"incident": inc, "title": title, "service": service, "description": description, "question": question})
-    asyncio.create_task(_ask_maestro(trace_id, question))
+                detail={"incident": inc, "title": title, "service": service, "description": description, "question": question,
+                        "auth_mode": auth_mode or "default"})
+    asyncio.create_task(_ask_maestro(trace_id, question, auth_mode))
     return {"trace_id": trace_id, "incident": inc}
 
 
@@ -190,10 +205,51 @@ async def ask(body: dict[str, Any]) -> dict[str, str]:
     question = str(body.get("question") or "").strip()
     if not question:
         raise HTTPException(400, "question is required")
+    auth_mode = _auth_mode(body)
     trace_id = new_trace_id()
-    hub.publish("question.asked", question[:200], trace_id=trace_id, to="maestro", detail={"question": question})
-    asyncio.create_task(_ask_maestro(trace_id, question))
+    hub.publish("question.asked", question[:200], trace_id=trace_id, to="maestro",
+                detail={"question": question, "auth_mode": auth_mode or "default"})
+    asyncio.create_task(_ask_maestro(trace_id, question, auth_mode))
     return {"trace_id": trace_id}
+
+
+# --- identity sandbox (ADR-0015) -------------------------------------------------------
+@app.post("/api/identity/try")
+async def identity_try(body: dict[str, Any]) -> dict[str, Any]:
+    """Perform one real on-behalf-of exchange for a demo identity and return both tokens' claims.
+
+    The console fetches the subject's own token (a demo user via the public IDE client, or its own
+    service account), then asks Maestro to delegate — exactly what happens during an incident. Maestro
+    is the only component holding the `maestro` client secret, so the exchange itself happens there.
+    No raw token is returned.
+    """
+    user = str(body.get("user") or "engineer").strip()
+    domain = str(body.get("domain") or "apim").strip()
+    if domain not in DOMAINS:
+        raise HTTPException(400, f"domain must be one of {list(DOMAINS)}")
+    creds = _credentials()
+    try:
+        if user == (settings.oidc_client_id or "fleet-console"):
+            subject = await client_credentials_token()
+        else:
+            demo = next((u for u in creds.get("demo_users", []) if u.get("username") == user), None)
+            if demo is None:
+                raise HTTPException(404, f"unknown demo identity {user!r}")
+            subject = await password_token(demo["username"], demo["password"])
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"Keycloak did not issue a token for {user}: {exc}")
+    try:
+        async with httpx2.AsyncClient(timeout=httpx2.Timeout(20.0)) as http:
+            resp = await http.post(f"{MAESTRO_URL}/api/delegate", json={"audience": f"{domain}-agent", "scope": f"domain-{domain}"},
+                                   headers={"Authorization": f"Bearer {subject}"})
+        resp.raise_for_status()
+        out = resp.json()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"Maestro could not perform the exchange: {exc}")
+    out.update({"user": user, "domain": domain, "audience": f"{domain}-agent", "scope": f"domain-{domain}"})
+    return out
 
 
 @app.get("/api/assessment/{trace_id}")
@@ -267,7 +323,7 @@ def _topology() -> dict[str, Any]:
     ]
     edges = [
         ["console", "keycloak"], ["console", "maestro"], ["ide", "gateway"], ["maestro", "gateway"], ["gateway", "maestro"],
-        ["keycloak", "gateway"], ["maestro", "skills"],
+        ["keycloak", "gateway"], ["maestro", "keycloak"], ["maestro", "skills"],
         ["gateway", "apim-agent"], ["gateway", "cache-agent"], ["gateway", "messaging-agent"],
         ["apim-agent", "skills"], ["cache-agent", "skills"], ["messaging-agent", "skills"],
         ["apim-agent", "edge-gateway"], ["cache-agent", "valkey"], ["messaging-agent", "kafka"],
@@ -279,7 +335,12 @@ def _topology() -> dict[str, Any]:
             "urls": {"grafana": settings.public_grafana_url, "prometheus": settings.public_prometheus_url,
                      "keycloak": settings.public_keycloak_url, "gateway_ui": f"{gw}/ui" if gw else "",
                      "edge": settings.public_edge_url},
-            "credentials": _credentials()}
+            "credentials": _credentials(),
+            # ADR-0015: how Maestro authenticates to the agents by default, and the audiences it can delegate to.
+            "identity": {"delegation": os.environ.get("MAESTRO_AUTH_MODE", "exchange").strip() or "exchange",
+                         "modes": list(AUTH_MODES), "domains": list(DOMAINS),
+                         "agent_audiences": [f"{d}-agent" for d in DOMAINS],
+                         "obo_lifetime_s": 300}}
 
 
 def _credentials() -> dict[str, Any]:

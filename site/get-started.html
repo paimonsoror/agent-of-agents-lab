@@ -66,7 +66,7 @@ make down      # delete the cluster; make reset = down + up</code></pre>
       <thead><tr><th>Identity</th><th>Kind</th><th>Secret / password</th><th>Roles</th></tr></thead>
       <tbody>
         <tr><td><code>fleet-console</code></td><td>service account (client credentials)</td><td><code>fleet-console-secret</code></td><td>all</td></tr>
-        <tr><td><code>maestro</code></td><td>service account</td><td><code>maestro-secret</code></td><td>all</td></tr>
+        <tr><td><code>maestro</code></td><td>service account; may perform token exchange (on-behalf-of, ADR-0015)</td><td><code>maestro-secret</code></td><td>none of its own</td></tr>
         <tr><td><code>engineer</code></td><td>realm user</td><td><code>engineer</code></td><td><code>maestro:ask</code>, <code>domain:apim</code>, <code>domain:cache</code></td></tr>
         <tr><td><code>sre-lead</code></td><td>realm user</td><td><code>sre-lead</code></td><td>all</td></tr>
       </tbody>
@@ -85,7 +85,12 @@ claude mcp add --transport http maestro       http://HOST_IP:30083/maestro/mcp -
 claude mcp add --transport http domain-agents http://HOST_IP:30083/agents/mcp  --header "Authorization: Bearer $TOKEN"</code></pre>
     <p>Tokens last eight hours. <code>engineer</code> will not see the <code>messaging_*</code> tools; <code>sre-lead</code> sees everything. Copilot and Cursor setup is in <a href="https://github.com/paimonsoror/agent-of-agents-lab/blob/main/docs/ide-setup.md" rel="noopener">docs/ide-setup.md</a>.</p>
 
-    <h2>7. Where things live</h2>
+    <h2 id="obo">7. See a badge being narrowed</h2>
+<pre><code>make obo-demo USER_ID=engineer DOMAIN=cache       # a five-minute badge for one agent, carried by Maestro
+make obo-demo USER_ID=engineer DOMAIN=messaging   # Keycloak refuses: engineer never held that door</code></pre>
+    <p>The same exchange runs live from the console's <b>Identity</b> button, and <code>make smoke</code> proves the exact claims on every build. The story is on the <a href="identity.html">Identity page</a>.</p>
+
+    <h2>8. Where things live</h2>
     <div class="table-wrap"><table>
       <thead><tr><th>Path</th><th>What lives there</th></tr></thead>
       <tbody>
@@ -94,6 +99,7 @@ claude mcp add --transport http domain-agents http://HOST_IP:30083/agents/mcp  -
         <tr><td><code>docs/adr/</code></td><td>Architecture Decision Records</td></tr>
         <tr><td><code>docs/runbook.md</code></td><td>Operating it: secrets, URLs, RAM budget, troubleshooting, teardown</td></tr>
         <tr><td><code>docs/adding-a-domain.md</code></td><td>The extension path, with messaging as the worked example</td></tr>
+        <tr><td><code>docs/identity-on-behalf-of.md</code></td><td>Plain-language explainer of on-behalf-of tokens, with the real claims</td></tr>
         <tr><td><code>skills/</code></td><td>The SKILL.md bundles that give each agent its cognition</td></tr>
         <tr><td><code>agents/</code></td><td>Python services: domain agents, Maestro, Fleet Console, sample member portal</td></tr>
         <tr><td><code>deploy/</code></td><td>KIND config, Helm umbrella chart, third-party values, Keycloak realm, Grafana dashboards, scenarios</td></tr>
@@ -102,8 +108,8 @@ claude mcp add --transport http domain-agents http://HOST_IP:30083/agents/mcp  -
       </tbody>
     </table></div>
 
-    <h2>8. Adding a domain</h2>
-    <p>Write <code>skills/&lt;domain&gt;-observability/SKILL.md</code> (most of the work, and the most valuable part), add a tool module under <code>agents/domain-agent/domains/</code>, a platform plus exporter plus agent Deployment in the chart, a gateway target and authorisation rule, a realm role, a Grafana dashboard, a console node and a fault scenario. Record it in an ADR. Maestro does not change.</p>
+    <h2>9. Adding a domain</h2>
+    <p>Write <code>skills/&lt;domain&gt;-observability/SKILL.md</code> (most of the work, and the most valuable part), add a tool module under <code>agents/domain-agent/domains/</code>, a platform plus exporter plus agent Deployment in the chart, a gateway target, authorisation rule and audience, a realm role plus the agent's bearer-only client and <code>domain-&lt;domain&gt;</code> scope, a Grafana dashboard, a console node and a fault scenario. Record it in an ADR. Maestro does not change.</p>
   </div>
 </section>
 

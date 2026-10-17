@@ -1,7 +1,7 @@
 # 0005. Keycloak issues identities; callers' tokens are propagated, not re-minted
 
 Date: 2026-10-15
-Status: Accepted
+Status: Accepted; the *token propagation* decision is superseded by [0015](0015-on-behalf-of-token-exchange.md) (Maestro now exchanges the caller's token for a per-agent on-behalf-of token). The Keycloak, roles and defence-in-depth decisions below still stand.
 
 ## Context
 

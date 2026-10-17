@@ -1,10 +1,14 @@
-"""JWT verification and token acquisition against Keycloak (ADR-0005).
+"""JWT verification and token acquisition against Keycloak (ADR-0005, ADR-0015).
 
 - `KeycloakTokenVerifier` plugs into the MCP SDK (`MCPServer(token_verifier=..., auth=...)`)
   so every MCP request is authenticated before a tool runs, independently of the gateway.
 - `verify_bearer` does the same for plain HTTP endpoints (Maestro's /api/ask).
-- `client_credentials_token` lets a service mint its *own* token (the Fleet Console does;
-  Maestro never does for downstream calls — it propagates the caller's token).
+- `client_credentials_token` lets a service mint its *own* token (the Fleet Console does).
+- `exchange_token` performs an RFC 8693 token exchange: Maestro trades the caller's token for a
+  short-lived on-behalf-of token addressed to exactly one domain agent (ADR-0015).
+
+A token's claims are summarised with `token_summary` wherever they are shown to humans
+(events, findings). Raw tokens never leave the process through those paths.
 """
 
 from __future__ import annotations
@@ -12,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx2
@@ -27,6 +31,32 @@ from maestro_common.events import current_caller
 
 log = logging.getLogger(__name__)
 
+TOKEN_EXCHANGE_GRANT = "urn:ietf:params:oauth:grant-type:token-exchange"
+ACCESS_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:access_token"
+
+
+def token_summary(claims: dict[str, Any]) -> dict[str, Any]:
+    """The human-facing view of a token: who, presented by whom, for whom, with which roles, for how long."""
+    aud = claims.get("aud")
+    aud_list = [aud] if isinstance(aud, str) else list(aud or [])
+    act = claims.get("act")
+    actor = act.get("client_id", "") if isinstance(act, dict) else (str(act) if act else "")
+    iat, exp = claims.get("iat"), claims.get("exp")
+    return {
+        "sub": str(claims.get("sub", "")),
+        "username": str(claims.get("preferred_username", "")),
+        "azp": str(claims.get("azp", claims.get("client_id", ""))),
+        "act": actor,
+        "delegated": bool(actor),
+        "aud": aud_list,
+        "roles": list(claims.get("realm_access", {}).get("roles", [])),
+        "scope": str(claims.get("scope", "")),
+        "iat": iat,
+        "exp": exp,
+        "lifetime_s": (int(exp) - int(iat)) if isinstance(iat, int) and isinstance(exp, int) else None,
+        "jti": str(claims.get("jti", "")),
+    }
+
 
 @dataclass(frozen=True)
 class Caller:
@@ -35,21 +65,36 @@ class Caller:
     roles: tuple[str, ...]
     preferred_username: str
     raw_token: str
+    claims: dict[str, Any] = field(default_factory=dict, compare=False)
+
+    @property
+    def display(self) -> str:
+        return self.preferred_username or self.azp or self.sub or "unknown"
 
     def as_dict(self) -> dict[str, Any]:
-        return {"sub": self.sub, "azp": self.azp, "roles": list(self.roles), "username": self.preferred_username}
+        return token_summary(self.claims) if self.claims else {"sub": self.sub, "azp": self.azp, "roles": list(self.roles), "username": self.preferred_username}
 
 
 class JWTError(Exception):
     pass
 
 
+class TokenExchangeError(Exception):
+    """Keycloak declined to exchange the token (e.g. the subject lacks the role behind the requested audience)."""
+
+    def __init__(self, error: str, description: str, status: int = 400) -> None:
+        super().__init__(f"{error}: {description}")
+        self.error = error
+        self.description = description
+        self.status = status
+
+
 class _Verifier:
     """Verifies RS256 JWTs with Keycloak's JWKS; caches keys via PyJWKClient."""
 
-    def __init__(self, jwks_url: str, issuer: str, audience: str) -> None:
+    def __init__(self, jwks_url: str, issuer: str, audiences: tuple[str, ...]) -> None:
         self.issuer = issuer
-        self.audience = audience
+        self.audiences = list(audiences)
         self._jwks = PyJWKClient(jwks_url, cache_keys=True, lifespan=600) if jwks_url else None
 
     def verify(self, token: str) -> dict[str, Any]:
@@ -61,7 +106,7 @@ class _Verifier:
                 token,
                 key,
                 algorithms=["RS256"],
-                audience=self.audience,
+                audience=self.audiences,  # any one of these in `aud` is accepted
                 issuer=self.issuer,
                 options={"require": ["exp", "iss", "aud"]},
             )
@@ -69,7 +114,7 @@ class _Verifier:
             raise JWTError(str(exc)) from exc
 
 
-_verifier = _Verifier(settings.oidc_jwks_url, settings.oidc_issuer, settings.oidc_audience)
+_verifier = _Verifier(settings.oidc_jwks_url, settings.oidc_issuer, settings.oidc_audiences)
 
 
 def caller_from_claims(claims: dict[str, Any], raw_token: str) -> Caller:
@@ -79,6 +124,7 @@ def caller_from_claims(claims: dict[str, Any], raw_token: str) -> Caller:
         roles=tuple(claims.get("realm_access", {}).get("roles", [])),
         preferred_username=str(claims.get("preferred_username", "")),
         raw_token=raw_token,
+        claims=dict(claims),
     )
 
 
@@ -157,3 +203,65 @@ _token_cache = _TokenCache()
 async def client_credentials_token(client_id: str | None = None, client_secret: str | None = None) -> str:
     """Mint (and cache) this service's own token. Only the Fleet Console should need this."""
     return await _token_cache.get(client_id or settings.oidc_client_id, client_secret or settings.oidc_client_secret)
+
+
+async def password_token(username: str, password: str, client_id: str = "ide-cli") -> str:
+    """A demo user's own token (password grant on the public IDE client). Used by the console's identity sandbox only."""
+    async with httpx2.AsyncClient(timeout=httpx2.Timeout(10.0)) as http:
+        resp = await http.post(
+            settings.oidc_token_url,
+            data={"grant_type": "password", "client_id": client_id, "username": username, "password": password},
+        )
+    resp.raise_for_status()
+    return resp.json()["access_token"]
+
+
+@dataclass(frozen=True)
+class ExchangedToken:
+    token: str
+    claims: dict[str, Any]
+
+    def summary(self) -> dict[str, Any]:
+        return token_summary(self.claims)
+
+
+def exchange_request(audience: str, scope: str | None) -> dict[str, str]:
+    """The RFC 8693 request Maestro sends (minus the secret and the subject token), for display."""
+    req = {
+        "grant_type": TOKEN_EXCHANGE_GRANT,
+        "client_id": settings.oidc_client_id or "maestro",
+        "subject_token_type": ACCESS_TOKEN_TYPE,
+        "requested_token_type": ACCESS_TOKEN_TYPE,
+        "audience": audience,
+    }
+    if scope:
+        req["scope"] = scope
+    return req
+
+
+async def exchange_token(subject_token: str, *, audience: str, scope: str | None) -> ExchangedToken:
+    """RFC 8693 standard token exchange at Keycloak (ADR-0015).
+
+    Trades `subject_token` (the caller's own token, which must list this client in `aud`) for a new
+    access token issued to *this* client: `sub` stays the caller, `azp` becomes this client, `aud`
+    becomes `audience`, realm roles are filtered to what `scope` allows, and the lifetime is the
+    short one configured on this client. Keycloak refuses when the subject lacks the role behind
+    the audience ("Requested audience not available"), which surfaces as TokenExchangeError.
+
+    Deliberately not cached: each downstream call is its own, visible exchange. Production code
+    would cache per (subject, audience) until `exp`.
+    """
+    if not settings.oidc_client_id or not settings.oidc_client_secret:
+        raise TokenExchangeError("misconfigured", "OIDC_CLIENT_ID / OIDC_CLIENT_SECRET are not set for this service", 500)
+    data = {**exchange_request(audience, scope), "client_secret": settings.oidc_client_secret, "subject_token": subject_token}
+    async with httpx2.AsyncClient(timeout=httpx2.Timeout(10.0)) as http:
+        resp = await http.post(settings.oidc_token_url, data=data)
+    try:
+        body = resp.json()
+    except ValueError:
+        body = {}
+    if resp.status_code != 200 or "access_token" not in body:
+        raise TokenExchangeError(str(body.get("error", f"http_{resp.status_code}")), str(body.get("error_description", resp.text[:200])), resp.status_code)
+    token = body["access_token"]
+    claims = jwt.decode(token, options={"verify_signature": False})
+    return ExchangedToken(token=token, claims=claims)

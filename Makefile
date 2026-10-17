@@ -10,7 +10,7 @@ export VM SSH_KEY REMOTE_DIR HOST_IP
 
 .PHONY: help up down reset clean build smoke status urls validate-skills \
         scenario-apim-bad-route scenario-cache-pressure scenario-messaging-lag scenario-clear scenario-status \
-        token-engineer token-sre-lead token-console bootstrap
+        token-engineer token-sre-lead token-console obo-demo bootstrap
 
 help: ## Show this help
 	@awk 'BEGIN{FS=":.*##"; printf "\nUsage: make <target> [HOST_IP=x.x.x.x]\n\n"} /^[a-zA-Z0-9_%-]+:.*##/ {printf "  \033[36m%-26s\033[0m %s\n", $$1, $$2} /^##@/ {printf "\n%s\n", substr($$0,5)}' $(MAKEFILE_LIST)
@@ -57,6 +57,8 @@ token-sre-lead: ## JWT for user sre-lead (all roles)
 	@source scripts/lib.sh && token_password sre-lead sre-lead
 token-console: ## JWT for the fleet-console service account
 	@source scripts/lib.sh && token_client_credentials fleet-console fleet-console-secret
+obo-demo: ## Show an on-behalf-of token exchange in plain language (USER=engineer DOMAIN=apim)
+	@bash scripts/obo-demo.sh "$${USER_ID:-engineer}" "$${DOMAIN:-apim}"
 
 ##@ Logs
 logs-%: ## Tail logs, e.g. make logs-maestro, logs-cache-agent, logs-fleet-gateway

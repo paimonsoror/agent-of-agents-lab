@@ -116,8 +116,9 @@ a:hover { text-decoration: underline; }
 .btn.small { padding: 6px 10px; font-size: 13px; }
 .btn[disabled] { opacity: .45; cursor: not-allowed; }
 label { display: block; font-size: 12px; color: var(--muted); margin: 8px 0 4px; text-transform: uppercase; letter-spacing: .06em; }
-input, textarea { width: 100%; font: inherit; color: var(--text); background: var(--bg-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; resize: vertical; }
-input:focus, textarea:focus { outline: 2px solid color-mix(in srgb, var(--accent-2) 60%, transparent); border-color: var(--accent-2); }
+input, textarea, select { width: 100%; font: inherit; color: var(--text); background: var(--bg-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; resize: vertical; }
+input:focus, textarea:focus, select:focus { outline: 2px solid color-mix(in srgb, var(--accent-2) 60%, transparent); border-color: var(--accent-2); }
+select { cursor: pointer; }
 
 /* layout */
 .layout { display: grid; grid-template-columns: 320px 1fr; gap: 16px; padding: 16px 20px 0; align-items: start; }
@@ -146,6 +147,7 @@ input:focus, textarea:focus { outline: 2px solid color-mix(in srgb, var(--accent
 .dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; flex: none; }
 .c-incident { background: var(--c-incident); } .c-request { background: var(--c-request); } .c-skills { background: var(--c-skills); }
 .c-evidence { background: var(--c-evidence); } .c-finding { background: var(--c-finding); } .c-scenario { background: var(--c-scenario); }
+.dot.c-identity { background: var(--c-identity); }
 
 /* SVG */
 .col-label { font-size: 15px; letter-spacing: .22em; fill: var(--muted); font-weight: 600; text-anchor: middle; }
@@ -309,6 +311,30 @@ input:focus, textarea:focus { outline: 2px solid color-mix(in srgb, var(--accent
 .pbp-step-title { font-weight: 700; font-size: 15px; }
 .pbp-step-text { color: var(--text-2); font-size: 13.5px; }
 .pbp-step-node { font-family: var(--mono); font-size: 12px; color: var(--accent-2); }
+
+/* identity explainer + on-behalf-of badges (ADR-0015) */
+.pbp-badges { display: grid; grid-template-columns: 1fr; gap: 8px; margin-top: 8px; }
+.badge-card { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--bg); font-size: 12.5px; }
+.badge-card.issued { border-color: var(--c-identity); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c-identity) 35%, transparent); }
+.badge-card.refused { border-color: var(--c-incident); }
+.badge-title { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-bottom: 6px; }
+.badge-card.issued .badge-title { color: var(--c-identity); }
+.badge-card.refused .badge-title { color: var(--c-incident); }
+.badge-row { display: grid; grid-template-columns: 86px 1fr; gap: 6px; padding: 2px 0; align-items: baseline; }
+.badge-k { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.badge-row code { font-family: var(--mono); font-size: 11.5px; color: var(--accent-2); }
+.badge-why { color: var(--c-incident); font-weight: 600; margin-bottom: 6px; }
+.idy-steps { display: grid; gap: 6px; margin: 0 0 14px; font-size: 13.5px; color: var(--text-2); }
+.idy-steps div { padding: 8px 10px; border-radius: 8px; background: var(--bg-2); border: 1px solid var(--line); }
+.idy-steps b { color: var(--text); }
+.idy-form { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: end; margin-bottom: 6px; }
+.idy-form label { margin: 0; }
+.idy-form .btn { grid-column: 1 / -1; }
+.idy-compare { width: 100%; border-collapse: collapse; font-size: 12.5px; margin: 6px 0 8px; }
+.idy-compare th, .idy-compare td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.idy-compare th { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.idy-compare td:first-child { color: var(--muted); }
+.idy-compare td:last-child { color: var(--text); }
 
 @media (max-width: 1400px) {
   .layout { grid-template-columns: 280px 1fr; }

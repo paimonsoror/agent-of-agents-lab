@@ -54,9 +54,11 @@ site/                GitHub Pages tour: static HTML/CSS/JS, no build step (ADR-0
    the work and the most valuable part.
 2. Add `agents/domain-agent/domains/<domain>.py` exposing the platform-native tools.
 3. Add the platform + exporter + agent Deployment to `deploy/charts/maestro/templates/domain-<domain>/`.
-4. Add a target to the fleet gateway's MCP backend and an authorization rule
-   (`deploy/values/agentgateway-fleet.yaml`), a realm role `domain:<domain>`
-   (`deploy/keycloak/realm.json`), and a Grafana dashboard.
+4. Add a target to the fleet gateway's MCP backend, an authorization rule and the
+   agent's audience (`deploy/charts/maestro/templates/gateway/fleet-gateway.yaml`); in
+   `deploy/keycloak/realm.json` a realm role `domain:<domain>`, a bearer-only client
+   `<domain>-agent`, a client scope `domain-<domain>` (audience mapper + scope mapping)
+   listed as an optional scope of `maestro` (ADR-0015); and a Grafana dashboard.
 5. Add the node to the Fleet Console topology (`agents/fleet-console/static/topology.js`).
 6. Add a fault scenario. Record it all in an ADR. Run `make reset && make smoke`.
 

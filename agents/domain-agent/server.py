@@ -56,7 +56,10 @@ def build_mcp() -> tuple[MCPServer, ModuleType]:
         current_caller.set(caller_info)
         started = time.perf_counter()
 
-        emit("request.received", f"{settings.service_name} received assess: {question[:140]}",
+        who = caller.display if caller else "unknown"
+        presented = (f" on behalf of {who}, presented by {caller_info.get('azp')} (on-behalf-of token for {', '.join(caller_info.get('aud', []))})"
+                     if caller_info.get("delegated") else f" from {who}")
+        emit("request.received", f"{settings.service_name} received assess{presented}: {question[:140]}",
              from_="gateway", to=settings.service_name, detail={"caller": caller_info, "question": question})
         emit("skills.loaded", "Loaded skills: " + ", ".join(f"{s.name}@{s.version}" for s in skills), to="skills",
              detail={"skills": [{"name": s.name, "version": s.version, "references": list(s.references)} for s in skills]})
@@ -87,7 +90,9 @@ def build_mcp() -> tuple[MCPServer, ModuleType]:
             "trace_id": trace,
             **analytic,
             "skills_used": [s.name for s in skills],
-            "caller": {"sub": caller_info.get("sub", ""), "azp": caller_info.get("azp", "")},
+            # Who this finding was produced for (sub) and who presented the token (azp/act) — ADR-0015.
+            "caller": {k: caller_info.get(k, "" if k not in ("aud", "roles", "delegated") else ([] if k != "delegated" else False))
+                       for k in ("sub", "username", "azp", "act", "delegated", "aud", "roles")},
             "model": result.model,
             "turns": result.turns,
             "duration_ms": int((time.perf_counter() - started) * 1000),

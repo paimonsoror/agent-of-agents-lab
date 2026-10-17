@@ -52,10 +52,13 @@ def _reference_tool() -> ToolSpec:
     )
 
 
-def _assess_tool(remote: federation.RemoteTool, token: str, trace_id: str, findings: list[dict[str, Any]], errors: dict[str, str]) -> ToolSpec:
+def _assess_tool(remote: federation.RemoteTool, caller: Caller, mode: str, trace_id: str, findings: list[dict[str, Any]], errors: dict[str, str]) -> ToolSpec:
     async def handler(args: dict[str, Any]) -> Any:
         try:
-            finding = await federation.call(token, remote.name, {"question": args["question"], "trace_id": trace_id})
+            finding = await federation.call(caller, remote.name, {"question": args["question"], "trace_id": trace_id}, mode=mode)
+        except federation.DelegationRefused as exc:
+            errors[remote.target] = f"delegation refused by Keycloak: {exc.description}"[:300]
+            raise
         except Exception as exc:
             errors[remote.target] = str(exc)[:300]
             raise
@@ -76,14 +79,17 @@ def _assess_tool(remote: federation.RemoteTool, token: str, trace_id: str, findi
     )
 
 
-async def run_assessment(question: str, trace_id: str, caller: Caller) -> dict[str, Any]:
+async def run_assessment(question: str, trace_id: str, caller: Caller, auth_mode: str | None = None) -> dict[str, Any]:
     current_trace.set(trace_id)
     caller_info = caller.as_dict()
     current_caller.set(caller_info)
     started = time.perf_counter()
+    mode = auth_mode if auth_mode in federation.AUTH_MODES else settings.maestro_auth_mode
+    if mode not in federation.AUTH_MODES:
+        mode = "exchange"
     origin = "ide" if caller.azp == "ide-cli" else "console"
     emit("request.received", f"Maestro received: {question[:140]}", from_=origin, to="maestro",
-         detail={"caller": caller_info, "question": question})
+         detail={"caller": caller_info, "question": question, "auth_mode": mode})
     emit("skills.loaded", "Loaded skills: " + ", ".join(f"{s.name}@{s.version}" for s in _skills), to="skills",
          detail={"skills": [{"name": s.name, "version": s.version} for s in _skills]})
 
@@ -97,7 +103,7 @@ async def run_assessment(question: str, trace_id: str, caller: Caller) -> dict[s
     findings: list[dict[str, Any]] = []
     errors: dict[str, str] = {}
     visible = sorted({t.target for t in remote_tools if t.is_assess})
-    tools = [_assess_tool(t, caller.raw_token, trace_id, findings, errors) for t in remote_tools if t.is_assess]
+    tools = [_assess_tool(t, caller, mode, trace_id, findings, errors) for t in remote_tools if t.is_assess]
     tools.append(_reference_tool())
 
     loop = LLMLoop(system=_system, tools=tools, output_schema=ASSESSMENT_OUTPUT_SCHEMA)
@@ -125,6 +131,7 @@ async def run_assessment(question: str, trace_id: str, caller: Caller) -> dict[s
         "not_consulted": not_consulted,
         "findings": findings,
         "caller": {"sub": caller.sub, "azp": caller.azp, "username": caller.preferred_username},
+        "auth_mode": mode,
         "model": result.model,
         "turns": result.turns,
         "duration_ms": int((time.perf_counter() - started) * 1000),

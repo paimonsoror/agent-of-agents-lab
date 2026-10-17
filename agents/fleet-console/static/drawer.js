@@ -1,6 +1,7 @@
 /* Play-by-play drawer: click any box on the board to read, in plain English, what that component
  * was asked, what it did, and how it talked to its neighbours during the current trace.
- * Also hosts the static "How it works" guide. Vanilla JS, no deps. Wired by app.js via init(). */
+ * Also hosts the static "How it works" guide and the "Identity" explainer with its live
+ * on-behalf-of sandbox (ADR-0015). Vanilla JS, no deps. Wired by app.js via init(). */
 
 window.MaestroDrawer = (function () {
   "use strict";
@@ -11,20 +12,20 @@ window.MaestroDrawer = (function () {
   const RESULT_CLIP = 600;
 
   let api = null;
-  const st = { open: false, mode: null, nodeId: null, raf: 0 };
+  const st = { open: false, mode: null, nodeId: null, raf: 0, idy: { user: "engineer", domain: "messaging", result: null, busy: false } };
 
   // What each box is for — shown at the top of its play-by-play so a newcomer has context even
   // before the first event arrives.
   const ROLE = {
     "console": "The consumer. Stands in for the ITSM / chat bridge: raising an incident here asks Maestro using the console's own non-human identity (a Keycloak service account).",
     "ide": "The other consumer. An engineer's IDE (Claude Code, Copilot, Cursor) talks to the very same gateway endpoint with the engineer's own identity — same agents, same tools, filtered by the engineer's roles.",
-    "maestro": "The orchestrator — the agent of agents. It never remediates: it works out which domains are relevant, asks their agents in parallel (forwarding the caller's own token), and consolidates their findings into one assessment for a human.",
-    "gateway": "The fleet gateway (agentgateway). Every hop between Maestro and the domain agents passes through here: it validates the caller's JWT against Keycloak, enforces per-tool RBAC (a caller without the domain role never even sees that agent's tools), passes the token through, and records metrics.",
-    "keycloak": "The identity provider. Issues the JWTs every caller presents: client-credentials tokens for services (non-human identities) and user tokens for engineers. Roles ride inside the token as realm_access.roles.",
+    "maestro": "The orchestrator — the agent of agents. It never remediates: it works out which domains are relevant, asks their agents in parallel, and consolidates their findings into one assessment for a human. Before each agent call it asks Keycloak for an on-behalf-of token: a badge that names the caller, names Maestro as the carrier, opens exactly one agent, and expires in minutes.",
+    "gateway": "The fleet gateway (agentgateway). Every hop between Maestro and the domain agents passes through here: it validates the JWT against Keycloak, enforces per-tool RBAC from the roles inside the token (an on-behalf-of token carries exactly one), passes the token through, and records metrics.",
+    "keycloak": "The identity provider. Issues the JWTs every caller presents: client-credentials tokens for services, user tokens for engineers, and — on Maestro's request — short-lived on-behalf-of tokens (RFC 8693 token exchange) that keep the caller as the subject but are addressed to a single domain agent with a single role. It refuses to delegate a right the caller never had.",
     "skills": "The cognition. Each agent's expertise is a SKILL.md bundle (agentskills.io format) — what to check, which metrics and dashboards matter, what 'implicated' means. Agents load their skills at request time and can read reference files on demand.",
-    "apim-agent": "Domain agent for API management. Verifies the JWT itself, loads the apim-observability skill, inspects the edge gateway's declarative config and change history, probes routes, and reads the shared Prometheus — then returns a Finding.",
-    "cache-agent": "Domain agent for the distributed cache. Loads the cache-observability skill, reads Valkey INFO / CONFIG / SLOWLOG natively, checks evictions and hit ratio in Prometheus, and returns a Finding.",
-    "messaging-agent": "Domain agent for messaging. Loads the messaging-observability skill, reads consumer-group lag and broker metadata from Kafka, checks produce rate and members in Prometheus, and returns a Finding.",
+    "apim-agent": "Domain agent for API management. Accepts only tokens addressed to it, verifies them itself, loads the apim-observability skill, inspects the edge gateway's declarative config and change history, probes routes, and reads the shared Prometheus — then returns a Finding.",
+    "cache-agent": "Domain agent for the distributed cache. Accepts only tokens addressed to it, loads the cache-observability skill, reads Valkey INFO / CONFIG / SLOWLOG natively, checks evictions and hit ratio in Prometheus, and returns a Finding.",
+    "messaging-agent": "Domain agent for messaging. Accepts only tokens addressed to it, loads the messaging-observability skill, reads consumer-group lag and broker metadata from Kafka, checks produce rate and members in Prometheus, and returns a Finding.",
     "edge-gateway": "The API-management platform: a second agentgateway fronting the member portal. Its routes live in a ConfigMap, so a bad change is inspectable (and annotated with a change id).",
     "valkey": "The distributed-cache platform (Redis-compatible). The member portal caches member lookups here; memory pressure shows up as evictions and a collapsing hit ratio.",
     "kafka": "The messaging platform. The member portal publishes member.events; a consumer group reads them. Lag growth is the signal every messaging SRE watches first.",
@@ -37,10 +38,10 @@ window.MaestroDrawer = (function () {
     { node: "console", title: "1 · A consumer asks", text: "An operator raises a P1 in the console (or an engineer asks from their IDE). The console starts a trace — a correlation id every later event carries." },
     { node: "keycloak", title: "2 · Identity is established", text: "The consumer obtains a JWT from Keycloak: a client-credentials token for the console's service account, or the engineer's own user token. Roles such as domain:cache travel inside the token." },
     { node: "maestro", title: "3 · Maestro receives the question", text: "Maestro verifies the JWT, records who asked, loads its orchestration skill, and decides which domains could be involved." },
-    { node: "gateway", title: "4 · The fleet gateway authenticates and authorises", text: "Maestro connects over MCP with the caller's token — never its own. The gateway checks issuer, audience and signature against Keycloak, then lists only the tools the caller's roles allow. A missing role makes an agent invisible, not merely blocked." },
-    { node: "apim-agent", title: "5 · Domain agents investigate", text: "Each relevant agent receives assess() with the token passed through, verifies it again, and loads its SKILL.md bundle — the domain's expert knowledge." },
-    { node: "prometheus", title: "6 · Platforms and shared monitoring are queried", text: "Agents use platform-native tools (gateway config, Valkey INFO, Kafka lag) and PromQL against the shared Prometheus, citing Grafana panels as evidence." },
-    { node: "cache-agent", title: "7 · Findings come back", text: "Every agent returns the same Finding shape: implicated or cleared, a confidence score, evidence with links, and recommended actions. Agents recommend; they never remediate." },
+    { node: "gateway", title: "4 · The fleet gateway says what the caller may see", text: "Maestro asks the gateway for the tool list with the caller's own token. The gateway checks issuer, audience and signature against Keycloak, then lists only the tools the caller's roles allow. A missing role makes an agent invisible, not merely blocked." },
+    { node: "keycloak", title: "5 · One badge per agent, on behalf of the caller", text: "For each agent it will call, Maestro asks Keycloak to exchange the caller's token for an on-behalf-of token: same person, but addressed to that one agent, carrying that one role, valid for five minutes, and stamped with Maestro as the carrier. Keycloak refuses if the caller lacks the role." },
+    { node: "apim-agent", title: "6 · Domain agents investigate", text: "Each agent receives assess() with the on-behalf-of token, checks that the token is addressed to it, loads its SKILL.md bundle, and gathers evidence from its platform and from the shared Prometheus." },
+    { node: "cache-agent", title: "7 · Findings come back", text: "Every agent returns the same Finding shape: implicated or cleared, a confidence score, evidence with links, recommended actions, and who it worked for. Agents recommend; they never remediate." },
     { node: "console", title: "8 · One assessment, a human decides", text: "Maestro consolidates the findings into a single assessment — implicated, cleared, not consulted and why — and the next step for a responder. The human decides." },
   ];
 
@@ -53,6 +54,8 @@ window.MaestroDrawer = (function () {
     const parts = [];
     if (c.sub) parts.push(`sub ${c.sub}`);
     if (c.azp) parts.push(`azp ${c.azp}`);
+    if (c.act) parts.push(`act ${c.act}`);
+    if (Array.isArray(c.aud) && c.aud.length) parts.push(`aud ${c.aud.join(", ")}`);
     if (Array.isArray(c.roles) && c.roles.length) parts.push(`roles ${c.roles.join(", ")}`);
     return `${name}${parts.length ? ` (${parts.join(" · ")})` : ""}`;
   }
@@ -69,12 +72,52 @@ window.MaestroDrawer = (function () {
   function raw(ev) {
     return `<div class="pbp-rawrow"><button class="pbp-raw-toggle" type="button">raw</button><pre class="pbp-raw" hidden>${esc(JSON.stringify({ ts: ev.ts, trace_id: ev.trace_id, source: ev.source, kind: ev.kind, edge: ev.edge, summary: ev.summary, detail: ev.detail || null }, null, 2))}</pre></div>`;
   }
+  function lifetime(s) {
+    if (s == null) return "–";
+    if (s >= 3600) return `${Math.round(s / 3600)} h`;
+    if (s >= 60) return `${Math.round(s / 60)} min`;
+    return `${s} s`;
+  }
   const KIND_CLASS = {
     "incident.raised": "c-incident", "question.asked": "c-incident", "error": "c-error", "token.issued": "c-identity",
+    "token.exchanged": "c-identity", "token.refused": "c-error",
     "request.sent": "c-request", "request.received": "c-request", "tools.discovered": "c-request", "skills.loaded": "c-skills",
     "evidence.gathered": "c-evidence", "llm.turn": "c-evidence", "finding.returned": "c-finding", "assessment.posted": "c-finding",
     "scenario.applied": "c-scenario", "scenario.cleared": "c-scenario",
   };
+
+  // A token summary (from maestro_common.auth.token_summary) rendered as a "badge": who it is for,
+  // who carries it, which door it opens, for how long. The language is deliberately non-technical.
+  function badgeCard(t, title, cls) {
+    if (!t) return "";
+    const whoIs = t.username || t.sub || "unknown";
+    const carrier = t.act ? `${esc(t.azp)} <span class="muted">(acting on behalf of ${esc(whoIs)})</span>` : esc(t.azp || "–");
+    const doors = (t.roles || []).filter((r) => r.startsWith("domain:")).map((r) => r.slice(7));
+    const rows = [
+      ["who", esc(whoIs)],
+      ["carried by", carrier],
+      ["addressed to", (t.aud || []).map((a) => `<code>${esc(a)}</code>`).join(" ") || "–"],
+      ["may open", doors.length ? doors.map((d) => `<code>${esc(d)}</code>`).join(" ") : `<span class="muted">no domain</span>`],
+      ["all roles", (t.roles || []).map((r) => `<code>${esc(r)}</code>`).join(" ") || "–"],
+      ["valid for", esc(lifetime(t.lifetime_s))],
+    ];
+    return `<div class="badge-card ${cls || ""}"><div class="badge-title">${esc(title)}</div>` +
+      rows.map(([k, v]) => `<div class="badge-row"><span class="badge-k">${esc(k)}</span><span>${v}</span></div>`).join("") + `</div>`;
+  }
+
+  function exchangeBlock(d, refused) {
+    const req = d.request || {};
+    const reqLine = `grant ${esc(req.grant_type || "token-exchange")} · audience <code>${esc(req.audience || "")}</code> · scope <code>${esc(req.scope || "")}</code>`;
+    let b = `<div class="pbp-badges">${badgeCard(d.subject, "The caller's badge (what Maestro received)", "subject")}`;
+    if (refused) {
+      b += `<div class="badge-card refused"><div class="badge-title">Keycloak refused</div><div class="badge-why">${esc(d.error_description || d.error || "refused")}</div>` +
+        `<div class="muted">No badge for <code>${esc(req.audience || "")}</code> can be issued on behalf of someone who does not hold that domain's role. Maestro cannot borrow a right the caller never had; the domain is reported as not consulted.</div></div>`;
+    } else {
+      b += badgeCard(d.issued, "The on-behalf-of badge Maestro presents", "issued");
+    }
+    b += `</div><div class="pbp-meta">Request to Keycloak: ${reqLine}</div>`;
+    return b;
+  }
 
   // ------------------------------------------------------------------ relevance
   function domainOfAgent(id) { return id.endsWith("-agent") ? id.slice(0, -6) : null; }
@@ -91,6 +134,9 @@ window.MaestroDrawer = (function () {
       const tool = (ev.detail && ev.detail.tool) || "";
       return tool.startsWith(`${dom}_`);
     }
+    if (dom && (ev.kind === "token.exchanged" || ev.kind === "token.refused")) {
+      return (ev.detail && ev.detail.target) === dom;
+    }
     return false;
   }
 
@@ -102,13 +148,22 @@ window.MaestroDrawer = (function () {
     switch (ev.kind) {
       case "incident.raised": {
         const text = d.question || d.description || "";
-        const meta = [d.incident, d.title, d.service ? `service ${d.service}` : ""].filter(Boolean).join(" · ");
+        const meta = [d.incident, d.title, d.service ? `service ${d.service}` : "", d.auth_mode && d.auth_mode !== "default" ? `delegation ${d.auth_mode}` : ""].filter(Boolean).join(" · ");
         return { h: `Incident raised${d.incident ? ` · ${d.incident}` : ""}`, b: (meta ? `<div class="pbp-meta">${esc(meta)}</div>` : "") + quote(text || ev.summary) };
       }
       case "question.asked":
         return { h: `Question asked from ${src === "ide" ? "the IDE" : "the console"}`, b: quote(d.question || ev.summary) };
       case "token.issued":
         return { h: "Identity established", b: `<div>${esc(d.text || "Identity: client-credentials token for fleet-console issued by Keycloak")}</div>${d.caller ? `<div class="pbp-meta">${esc(who(d.caller))}</div>` : ""}` };
+      case "token.exchanged": {
+        const t = d.issued || {};
+        const target = d.target ? `${d.target}-agent` : (t.aud || [])[0] || "an agent";
+        return { h: `Keycloak issued an on-behalf-of badge for ${esc(target)} · ${esc(lifetime(t.lifetime_s))}`, b: exchangeBlock(d, false) };
+      }
+      case "token.refused": {
+        const req = d.request || {};
+        return { h: `Keycloak refused to delegate to ${esc(req.audience || "the agent")}`, b: exchangeBlock(d, true) };
+      }
       case "request.sent": {
         if (src === "maestro") {
           const tool = d.tool || "a domain agent";
@@ -117,22 +172,33 @@ window.MaestroDrawer = (function () {
           if (tr) {
             const a = tr.auth || {};
             const roles = Array.isArray(a.roles) ? a.roles.join(", ") : "";
+            const obo = a.mode === "exchange";
+            const authLine = obo
+              ? `On-behalf-of token: who <b>${esc(a.username || a.sub || "?")}</b> · carried by <b>${esc(a.azp || "maestro")}</b> · addressed to <b>${esc((a.aud || []).join(", "))}</b> · roles <b>${esc(roles || "none")}</b> · valid ${esc(lifetime(a.lifetime_s))}`
+              : `${esc(a.scheme || "Bearer JWT")}${a.sub || a.azp ? ` (${[a.username || a.sub ? `who ${a.username || a.sub}` : "", a.azp ? `azp ${a.azp}` : "", roles ? `roles ${roles}` : "", a.lifetime_s ? `valid ${lifetime(a.lifetime_s)}` : ""].filter(Boolean).map(esc).join(" · ")})` : ""}`;
             transport = `<div class="pbp-transport">` +
               `<div><b>Transport</b> ${esc(tr.protocol || "MCP tools/call over Streamable HTTP")}${tr.endpoint ? ` → <code>${esc(tr.endpoint)}</code>` : ""}</div>` +
-              `<div><b>Authorization</b> ${esc(a.scheme || "Bearer JWT")}${a.sub || a.azp ? ` (${[a.sub ? `sub ${a.sub}` : "", a.azp ? `azp ${a.azp}` : "", roles ? `roles ${roles}` : ""].filter(Boolean).map(esc).join(" · ")})` : ""}</div>` +
+              `<div><b>Authorization</b> ${authLine}</div>` +
               (tr.gateway_rule ? `<div><b>Gateway rule</b> <code>${esc(tr.gateway_rule)}</code></div>` : "") +
+              (tr.agent_audience ? `<div><b>Agent checks</b> token is addressed to <code>${esc(tr.agent_audience)}</code></div>` : "") +
               (tr.trace_id ? `<div><b>Trace</b> <code>${esc(tr.trace_id)}</code></div>` : "") + `</div>`;
           } else {
-            transport = `<div class="pbp-transport"><div><b>Transport</b> MCP tools/call over Streamable HTTP via the fleet gateway, Authorization: Bearer JWT (the caller's own token, passed through)</div></div>`;
+            transport = `<div class="pbp-transport"><div><b>Transport</b> MCP tools/call over Streamable HTTP via the fleet gateway, Authorization: Bearer JWT</div></div>`;
           }
           return { h: `Maestro → ${esc(tool)} via the fleet gateway`, b: quote(d.args && d.args.question) + transport };
         }
         return { h: ev.summary, b: quote(d.question) + (d.transport ? code(d.transport) : "") };
       }
       case "request.received": {
-        const w = who(d.caller);
-        if (src === "maestro") return { h: `Asked by ${esc((d.caller && (d.caller.username || d.caller.azp)) || "unknown")}`, b: `<div class="pbp-meta">${esc(w)}</div>${quote(d.question)}` };
-        return { h: `Received from the gateway · caller ${esc((d.caller && (d.caller.username || d.caller.azp)) || "unknown")}`, b: `<div class="pbp-meta">${esc(w)} · the JWT was verified again by the agent</div>${quote(d.question)}` };
+        const c = d.caller || {};
+        const w = who(c);
+        const name = c.username || c.azp || "unknown";
+        if (src === "maestro") return { h: `Asked by ${esc(name)}${d.auth_mode ? ` · delegation: ${esc(d.auth_mode)}` : ""}`, b: `<div class="pbp-meta">${esc(w)}</div>${quote(d.question)}` };
+        if (c.delegated) {
+          return { h: `Received from the gateway · on behalf of ${esc(name)}, presented by ${esc(c.azp)}`,
+            b: `<div class="pbp-meta">The agent verified the token itself: addressed to <code>${esc((c.aud || []).join(", "))}</code>, roles ${(c.roles || []).map((r) => `<code>${esc(r)}</code>`).join(" ") || "none"}, carrier <code>${esc(c.act)}</code>. A token addressed to another agent would have been refused here.</div>${quote(d.question)}` };
+        }
+        return { h: `Received from the gateway · caller ${esc(name)}`, b: `<div class="pbp-meta">${esc(w)} · the JWT was verified again by the agent (the caller's own token, passed through)</div>${quote(d.question)}` };
       }
       case "tools.discovered": {
         const tools = d.tools || [];
@@ -164,13 +230,15 @@ window.MaestroDrawer = (function () {
         const imp = d.implicated === true;
         const ev2 = (d.evidence || []).map((e) => `<li><code>${esc(e.source || "")}</code> ${esc(e.observation || "")}${e.link ? ` <a href="${esc(e.link)}" target="_blank" rel="noopener">open ↗</a>` : ""}</li>`).join("");
         const acts = (d.recommended_actions || []).map((a) => `<li>${esc(a)}</li>`).join("");
+        const c = d.caller || {};
+        const forWhom = c.sub || c.username ? `<div class="pbp-meta">Produced for ${esc(c.username || c.sub)}${c.delegated ? ` · presented by ${esc(c.azp)} on their behalf` : c.azp ? ` · via ${esc(c.azp)}` : ""}</div>` : "";
         return {
           h: `${esc(srcLabel)} returned its finding: ${imp ? "implicated" : "cleared"}${conf(d.confidence) ? ` · ${conf(d.confidence)}` : ""}`,
           b: `<div class="chips">${pill(imp ? `implicated · ${conf(d.confidence)}` : `cleared · ${conf(d.confidence)}`, imp ? "implicated" : "cleared")}${d.domain ? pill(d.domain) : ""}</div>` +
             (d.headline ? `<div class="pbp-strong">${esc(d.headline)}</div>` : "") + (d.summary ? `<p>${esc(d.summary)}</p>` : "") +
             (ev2 ? `<div class="pbp-meta">Evidence</div><ul class="pbp-list">${ev2}</ul>` : "") +
             (acts ? `<div class="pbp-meta">Recommended actions</div><ul class="pbp-list">${acts}</ul>` : "") +
-            (Array.isArray(d.skills_used) && d.skills_used.length ? `<div class="pbp-meta">Skills used: ${d.skills_used.map(esc).join(", ")}</div>` : ""),
+            (Array.isArray(d.skills_used) && d.skills_used.length ? `<div class="pbp-meta">Skills used: ${d.skills_used.map(esc).join(", ")}</div>` : "") + forWhom,
         };
       }
       case "assessment.posted": {
@@ -183,7 +251,7 @@ window.MaestroDrawer = (function () {
           h: "Maestro posted one consolidated assessment · a human decides the next step",
           b: (a.verdict ? `<div class="pbp-strong">${esc(a.verdict)}</div>` : "") + `<div class="chips">${chips.join("")}</div>` +
             (a.next_step_for_human ? `<div class="next-step"><b>Next step for a human</b>${esc(a.next_step_for_human)}</div>` : "") +
-            `<div class="pbp-meta">The full assessment, with every finding, is in the Assessment panel below the board.</div>`,
+            `<div class="pbp-meta">The full assessment, with every finding, is in the Assessment panel below the board.${a.auth_mode ? ` Delegation mode: ${esc(a.auth_mode)}.` : ""}</div>`,
         };
       }
       case "scenario.applied": return { h: `Fault injected: ${esc(ev.summary)}`, b: d && Object.keys(d).length ? code(d) : "" };
@@ -197,7 +265,7 @@ window.MaestroDrawer = (function () {
     const { h, b } = describe(ev, viewId);
     const cls = KIND_CLASS[ev.kind] || "c-neutral";
     const arrow = ev.edge && ev.edge.from && ev.edge.to ? `<span class="pbp-edge">${esc(nodeMeta(ev.edge.from).label)} → ${esc(nodeMeta(ev.edge.to).label)}</span>` : "";
-    return `<article class="pbp-card ${cls}${ev.kind === "error" ? " is-error" : ""}">` +
+    return `<article class="pbp-card ${cls}${ev.kind === "error" || ev.kind === "token.refused" ? " is-error" : ""}">` +
       `<div class="pbp-head"><span class="pbp-time">${esc(fmtTime(ev.ts))}</span><span class="tl-kind ${cls}">${esc(ev.kind)}</span><span class="pbp-src">${esc(ev.source)}</span>${arrow}</div>` +
       `<div class="pbp-headline">${h}</div>` + (b ? `<div class="pbp-body">${b}</div>` : "") + raw(ev) + `</article>`;
   }
@@ -222,6 +290,7 @@ window.MaestroDrawer = (function () {
     $("drawer-sub").textContent = [meta.sublabel, trace ? `trace ${trace}` : "no active trace", api.replaying() ? `replay · ${evs.length} of the steps so far` : `${evs.length} step${evs.length === 1 ? "" : "s"}`].filter(Boolean).join(" · ");
     let html = `<p class="pbp-role">${esc(ROLE[id] || "")}</p>`;
     if (id === "ide") html += identitiesBlock();
+    if (id === "keycloak") html += `<div class="pbp-meta" style="margin-bottom:10px">Want to see a delegation without raising an incident? <button type="button" class="pbp-link" data-open="identity">Open the Identity explainer</button>.</div>`;
     if (!trace) {
       html += `<div class="pbp-empty">No trace yet. Raise an incident or ask Maestro a question, then come back to this box to read its play-by-play.</div>`;
     } else if (!evs.length) {
@@ -247,7 +316,86 @@ window.MaestroDrawer = (function () {
     $("drawer-body").innerHTML = `<ol class="pbp-guide">` + GUIDE.map((s) => {
       const m = nodeMeta(s.node);
       return `<li><button type="button" class="pbp-step" data-node="${esc(s.node)}"><span class="pbp-step-title">${esc(s.title)}</span><span class="pbp-step-text">${esc(s.text)}</span><span class="pbp-step-node">→ ${esc(m.label)}</span></button></li>`;
-    }).join("") + `</ol><p class="pbp-role">Transport today is MCP over the fleet gateway with the caller's JWT propagated on every hop; A2A is the north star and is a routing-policy change on the same gateway. Agents recommend; humans decide.</p>`;
+    }).join("") + `</ol><p class="pbp-role">Transport today is MCP over the fleet gateway. Maestro presents an on-behalf-of token per agent (ADR-0015); A2A is the north star and is a routing-policy change on the same gateway. Agents recommend; humans decide. <button type="button" class="pbp-link" data-open="identity">More on identity →</button></p>`;
+  }
+
+  // The Identity explainer: plain-language story, a live sandbox against the real Keycloak, and the
+  // exchanges that happened in the current trace.
+  function renderIdentity() {
+    const idy = (api.identity && api.identity()) || {};
+    const c = (api.credentials && api.credentials()) || {};
+    const users = (c.demo_users || []).map((u) => u.username).concat([c.service_accounts && c.service_accounts.length ? "fleet-console" : null]).filter(Boolean);
+    const domains = idy.domains || DOMAINS;
+    const s = st.idy;
+    if (!users.includes(s.user)) s.user = users[0] || "engineer";
+    $("drawer-title").textContent = "Identity · on behalf of";
+    $("drawer-sub").textContent = `default delegation mode: ${idy.delegation || "exchange"} · tokens for agents live ${lifetime(idy.obo_lifetime_s || 300)}`;
+
+    const story = `
+      <p class="pbp-role">Think of a token as a <b>visitor badge</b>. A person (or the console) gets a badge from Keycloak that says who they are and which doors they may open. Maestro has to ask the domain agents questions <i>for</i> that person — but handing an agent the person's own badge would give it every door the person has, for the whole day.</p>
+      <div class="idy-steps">
+        <div><b>1.</b> Maestro shows Keycloak the caller's badge and asks: <i>"give me a badge on behalf of this person, for this one agent."</i></div>
+        <div><b>2.</b> Keycloak checks the person really holds that door's role. If not, it refuses — Maestro cannot borrow a right the caller never had.</div>
+        <div><b>3.</b> The new badge still names the person, but it is <b>addressed to one agent</b>, carries <b>one role</b>, expires in <b>${esc(lifetime(idy.obo_lifetime_s || 300))}</b>, and is stamped <b>"carried by Maestro"</b>.</div>
+        <div><b>4.</b> The gateway reads the role on the badge; the agent checks the badge is addressed to it. Two locks, both real. Every finding records who it was for and who carried the badge.</div>
+      </div>`;
+
+    const form = `
+      <h3 class="pbp-group">Try it against the real Keycloak</h3>
+      <div class="idy-form">
+        <label>Who is asking<select id="idy-user">${users.map((u) => `<option value="${esc(u)}"${u === s.user ? " selected" : ""}>${esc(u)}</option>`).join("")}</select></label>
+        <label>Agent to consult<select id="idy-domain">${domains.map((d) => `<option value="${esc(d)}"${d === s.domain ? " selected" : ""}>${esc(d)}-agent</option>`).join("")}</select></label>
+        <button type="button" class="btn primary small" id="idy-go"${s.busy ? " disabled" : ""}>${s.busy ? "Asking Keycloak…" : "Ask Keycloak for a badge"}</button>
+      </div>
+      <div class="pbp-meta">Hint: <code>engineer</code> holds apim and cache but not messaging; <code>sre-lead</code> and the console hold all three.</div>
+      <div id="idy-result">${renderTry(s.result)}</div>`;
+
+    const evs = (api.events() || []).filter((ev) => ev.kind === "token.exchanged" || ev.kind === "token.refused");
+    const trace = api.traceId();
+    const inTrace = `<h3 class="pbp-group">In this trace</h3>` + (!trace
+      ? `<div class="pbp-empty">No trace yet. Raise an incident and the exchanges Maestro performs will appear here.</div>`
+      : evs.length ? evs.map((ev) => card(ev, "identity")).join("") : `<div class="pbp-empty">No delegation yet in ${esc(trace)}${api.replaying() ? " up to this point" : ""}.</div>`);
+
+    const compare = `
+      <h3 class="pbp-group">Passthrough vs on behalf of</h3>
+      <table class="idy-compare"><thead><tr><th></th><th>Passthrough (ADR-0005)</th><th>On-behalf-of (ADR-0015)</th></tr></thead><tbody>
+        <tr><td>What the agent receives</td><td>The caller's own badge</td><td>A badge issued to Maestro <i>for</i> the caller</td></tr>
+        <tr><td>Doors it opens</td><td>Every domain the caller holds</td><td>Exactly one agent</td></tr>
+        <tr><td>Lifetime</td><td>8 hours</td><td>${esc(lifetime(idy.obo_lifetime_s || 300))}</td></tr>
+        <tr><td>Who is recorded</td><td>The caller only</td><td>The caller <i>and</i> Maestro as carrier (<code>act</code>)</td></tr>
+        <tr><td>If a badge leaks from an agent</td><td>Attacker is the caller, everywhere, all day</td><td>Attacker can reach one agent for minutes, and the log says Maestro carried it</td></tr>
+        <tr><td>Can Maestro exceed the caller?</td><td>No</td><td>No — Keycloak refuses what the caller lacks</td></tr>
+      </tbody></table>
+      <div class="pbp-meta">The incident intake lets you pick the mode per request, so you can raise the same P1 both ways and compare the play-by-play on the Keycloak and agent boxes. <code>make obo-demo</code> prints the same exchange from a terminal.</div>`;
+
+    $("drawer-body").innerHTML = story + form + inTrace + compare;
+    $("idy-user").addEventListener("change", (e) => { s.user = e.target.value; });
+    $("idy-domain").addEventListener("change", (e) => { s.domain = e.target.value; });
+    $("idy-go").addEventListener("click", runTry);
+  }
+
+  function renderTry(r) {
+    if (!r) return "";
+    if (r.error_text) return `<div class="pbp-card is-error c-error"><div class="pbp-headline">Could not run the exchange</div><div class="pbp-body">${esc(r.error_text)}</div></div>`;
+    const refused = !r.issued;
+    const d = { request: r.request, subject: r.subject, issued: r.issued, error: r.error && r.error.error, error_description: r.error && r.error.description };
+    const h = refused ? `Keycloak refused to delegate ${esc(r.user)} to ${esc(r.audience)}` : `Keycloak issued an on-behalf-of badge: ${esc(r.user)} → ${esc(r.audience)}`;
+    return `<article class="pbp-card ${refused ? "c-error is-error" : "c-identity"}"><div class="pbp-headline">${h}</div><div class="pbp-body">${exchangeBlock(d, refused)}</div></article>`;
+  }
+
+  async function runTry() {
+    const s = st.idy;
+    if (s.busy) return;
+    s.busy = true; s.result = null;
+    if (st.mode === "identity") renderIdentity();
+    try {
+      s.result = await api.tryIdentity(s.user, s.domain);
+    } catch (e) {
+      s.result = { error_text: String(e && e.message || e) };
+    } finally {
+      s.busy = false;
+      if (st.mode === "identity") renderIdentity();
+    }
   }
 
   function show() {
@@ -274,6 +422,14 @@ window.MaestroDrawer = (function () {
     $("drawer-body").scrollTop = 0;
   }
 
+  function openIdentity() {
+    st.mode = "identity"; st.nodeId = null;
+    api.select("keycloak");
+    renderIdentity();
+    show();
+    $("drawer-body").scrollTop = 0;
+  }
+
   function close() {
     const el = $("drawer");
     el.classList.remove("open");
@@ -284,14 +440,15 @@ window.MaestroDrawer = (function () {
 
   // Re-render the open node view when new events arrive or the replay cursor moves (coalesced per frame).
   function refresh() {
-    if (!st.open || st.mode !== "node") return;
+    if (!st.open || (st.mode !== "node" && st.mode !== "identity")) return;
     if (st.raf) return;
     st.raf = requestAnimationFrame(() => {
       st.raf = 0;
-      if (!st.open || st.mode !== "node") return;
+      if (!st.open) return;
       const body = $("drawer-body");
       const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 40;
-      renderNode(st.nodeId);
+      if (st.mode === "node") renderNode(st.nodeId);
+      else if (st.mode === "identity" && !st.idy.busy) { const top = body.scrollTop; renderIdentity(); body.scrollTop = top; return; }
       if (atBottom) body.scrollTop = body.scrollHeight;
     });
   }
@@ -299,8 +456,12 @@ window.MaestroDrawer = (function () {
   function wire() {
     $("drawer-close").addEventListener("click", close);
     $("how-it-works").addEventListener("click", () => (st.open && st.mode === "guide" ? close() : openGuide()));
+    const idBtn = $("identity-btn");
+    if (idBtn) idBtn.addEventListener("click", () => (st.open && st.mode === "identity" ? close() : openIdentity()));
     document.addEventListener("keydown", (e) => { if (e.key === "Escape" && st.open) close(); });
     $("drawer-body").addEventListener("click", (e) => {
+      const openBtn = e.target.closest("[data-open]");
+      if (openBtn) { if (openBtn.dataset.open === "identity") openIdentity(); return; }
       const nodeBtn = e.target.closest("[data-node]");
       if (nodeBtn) { openNode(nodeBtn.dataset.node); return; }
       const rawBtn = e.target.closest(".pbp-raw-toggle");
@@ -312,5 +473,5 @@ window.MaestroDrawer = (function () {
 
   function init(a) { api = a; wire(); }
 
-  return { init, openNode, openGuide, close, refresh, isOpen: () => st.open, current: () => st.nodeId };
+  return { init, openNode, openGuide, openIdentity, close, refresh, isOpen: () => st.open, current: () => st.nodeId };
 })();

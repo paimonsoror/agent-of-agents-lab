@@ -38,6 +38,15 @@ keycloak:
   adminUser: admin
   adminPassword: maestro-demo
 
+# How Maestro authenticates to the domain agents (ADR-0015).
+#   exchange     on-behalf-of: Maestro trades the caller's token at Keycloak (RFC 8693) for a 5-minute token
+#                addressed to one agent and carrying one domain role. The default.
+#   passthrough  the caller's own 8-hour token is forwarded unchanged (ADR-0005). Kept for comparison.
+# The console can also pick the mode per request (incident intake), which overrides this default.
+identity:
+  delegation: exchange
+  maestroClientSecret: maestro-secret   # public demo secret; must match deploy/keycloak/realm.json
+
 # Demo credentials surfaced by the Fleet Console (hover cards on the tool links). Everything here is
 # intentionally public demo data — the stack holds nothing sensitive (docs/contracts.md "Identity").
 # Keep grafana.password in step with deploy/values/kube-prometheus-stack.yaml and the users with
@@ -53,7 +62,7 @@ demo:
     - { username: sre-lead, password: sre-lead, roles: ["maestro:ask", "domain:apim", "domain:cache", "domain:messaging"] }
   serviceAccounts:
     - { client_id: fleet-console, secret: fleet-console-secret }
-    - { client_id: maestro, secret: maestro-secret }
+    - { client_id: maestro, secret: maestro-secret, note: "may perform token exchange (on-behalf-of)" }
 
 # Grafana dashboards: map of <name> -> dashboard JSON; set by up.sh with --set-file per deploy/grafana/*.json
 grafana:

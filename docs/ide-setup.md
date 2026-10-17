@@ -75,8 +75,16 @@ MCP OAuth discovery can log in through Keycloak instead of pasting a token.
 | no / expired token | 401 | 401 | — |
 
 The gateway filters `tools/list` by the roles in the JWT, so an agent you cannot use is
-invisible rather than merely refused. Maestro forwards *your* token to the domain agents,
-so it cannot see more on your behalf than you could see yourself (ADR-0005).
+invisible rather than merely refused. When Maestro calls an agent for you it does not
+forward your token: it asks Keycloak for an **on-behalf-of token** that still names you
+but is addressed to that one agent, carries that one role, and expires in five minutes
+(ADR-0015). Keycloak refuses to delegate a role you do not hold, so Maestro cannot see
+more on your behalf than you could see yourself. Your own token, used directly against
+`/agents/mcp`, still works as before.
+
+Try it without an incident: `make obo-demo USER_ID=engineer DOMAIN=messaging`, or the
+**Identity** button in the Fleet Console. Plain-language explainer:
+`docs/identity-on-behalf-of.md`.
 
 ## 5. Inspecting the gateway
 

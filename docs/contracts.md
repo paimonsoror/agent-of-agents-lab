@@ -50,13 +50,28 @@ overridden (`make up HOST_IP=...`). Public URLs are `http://$HOST_IP:<port>`.
 | Principal | Type | Credential | Realm roles |
 | --- | --- | --- | --- |
 | `fleet-console` | confidential client, service account | secret `fleet-console-secret` | `maestro:ask`, `domain:apim`, `domain:cache`, `domain:messaging` |
-| `maestro` | confidential client, service account | secret `maestro-secret` | (none — Maestro only ever propagates the caller's token) |
+| `maestro` | confidential client, service account; **may perform standard token exchange** (ADR-0015) | secret `maestro-secret` | (none — Maestro never calls an agent as itself; it exchanges the caller's token) |
 | `ide-cli` | public client, direct access grants | — | — |
+| `apim-agent`, `cache-agent`, `messaging-agent` | bearer-only clients (audiences only) | — | — |
 | user `engineer` | human | password `engineer` | `maestro:ask`, `domain:apim`, `domain:cache` (deliberately **not** messaging) |
 | user `sre-lead` | human | password `sre-lead` | all four |
 
-- Every client has an audience mapper adding `aud: maestro-gateway`.
-- Access token lifespan: 8 hours (demo convenience).
+- `fleet-console` and `ide-cli` tokens carry `aud: [maestro-gateway, maestro]` (two audience
+  mappers). Access token lifespan: 8 hours (demo convenience).
+- Client scopes `domain-apim`, `domain-cache`, `domain-messaging` (optional on `maestro`): each
+  adds `aud: <d>-agent` and permits realm role `domain:<d>` (scope mapping).
+
+### On-behalf-of tokens (ADR-0015)
+
+Maestro exchanges the caller's token before each agent call (RFC 8693 at the token endpoint):
+`grant_type=urn:ietf:params:oauth:grant-type:token-exchange`, `client_id=maestro`,
+`subject_token=<caller's token>`, `subject_token_type=urn:ietf:params:oauth:token-type:access_token`,
+`requested_token_type=urn:ietf:params:oauth:token-type:access_token`, `audience=<d>-agent`,
+`scope=domain-<d>`. The issued token has `sub` = the caller, `azp` = `maestro`,
+`act: {"client_id": "maestro"}`, `aud` = `<d>-agent`, `realm_access.roles` = `["domain:<d>"]`,
+lifetime 300 s. Keycloak refuses (`invalid_request`, "Requested audience not available: …")
+when the caller lacks `domain:<d>`. Mode: `MAESTRO_AUTH_MODE=exchange|passthrough`, overridable
+per request (`auth_mode`).
 - Issuer (`iss`): `http://$HOST_IP:30082/realms/maestro`. Keycloak is started with
   `KC_HOSTNAME=http://$HOST_IP:30082` so tokens fetched via the in-cluster URL carry the
   same issuer.
@@ -67,12 +82,14 @@ overridden (`make up HOST_IP=...`). Public URLs are `http://$HOST_IP:<port>`.
 
 | Path | Backend | Policies |
 | --- | --- | --- |
-| `/agents/mcp` | MCP backend multiplexing targets `apim`, `cache`, `messaging` (→ `http://<x>-agent.domain-<x>:8000/mcp`) | `jwtAuth` strict; `backendAuth.passthrough`; `mcpAuthorization`: `mcp.tool.target == "<x>" && "domain:<x>" in jwt.realm_access.roles` |
-| `/maestro/mcp` | MCP target `maestro` → `http://maestro.maestro:8000/mcp` | `jwtAuth` strict; passthrough; rule `"maestro:ask" in jwt.realm_access.roles` |
+| `/agents/mcp` | MCP backend multiplexing targets `apim`, `cache`, `messaging` (→ `http://<x>-agent.domain-<x>:8000/mcp`) | `jwtAuth` strict, audiences `maestro-gateway, apim-agent, cache-agent, messaging-agent` (any one); `backendAuth.passthrough`; `mcpAuthorization`: `mcp.tool.target == "<x>" && "domain:<x>" in jwt.realm_access.roles` |
+| `/agents/<x>/mcp` (one per domain) | MCP backend with the single target `<x>` → `http://<x>-agent.domain-<x>:8000/mcp` | `jwtAuth` strict, audiences `<x>-agent, maestro-gateway`; passthrough; rule `"domain:<x>" in jwt.realm_access.roles`. **Maestro calls agents here** (ADR-0015): an on-behalf-of token is addressed to one agent, and the multiplexed route would open sessions with all of them |
+| `/maestro/mcp` | MCP target `maestro` → `http://maestro.maestro:8000/mcp` | `jwtAuth` strict, audiences `maestro-gateway, maestro`; passthrough; rule `"maestro:ask" in jwt.realm_access.roles` |
 | `/ui` | built-in admin UI (read-only mode) | — |
 
-Multiplexed tool names are prefixed by target: `apim_assess`, `cache_assess`,
-`messaging_assess` (and `<x>_health`).
+Multiplexed tool names on `/agents/mcp` are prefixed by target: `apim_assess`, `cache_assess`,
+`messaging_assess` (and `<x>_health`). The single-target routes `/agents/<x>/mcp` expose the
+agent's own names, `assess` and `health`; Maestro strips the prefix when it calls through them.
 
 ## Environment variables
 
@@ -89,8 +106,8 @@ Common to every first-party Python service (`agents/common` reads these):
 | `GRAFANA_PUBLIC_URL` | `http://$HOST_IP:30081` | for deep links in evidence |
 | `OIDC_ISSUER` | `http://$HOST_IP:30082/realms/maestro` | expected `iss` |
 | `OIDC_JWKS_URL` | in-cluster JWKS URL | |
-| `OIDC_TOKEN_URL` | in-cluster token URL | for services that mint their own token |
-| `OIDC_AUDIENCE` | `maestro-gateway` | expected `aud` |
+| `OIDC_TOKEN_URL` | in-cluster token URL | for services that mint or exchange tokens |
+| `OIDC_AUDIENCE` | `cache-agent,maestro-gateway` | comma list; any one must appear in `aud`. Domain agents: `<name>,maestro-gateway`; Maestro: `maestro,maestro-gateway`; others: `maestro-gateway` |
 | `SKILLS_DIR` | `/app/skills` | |
 | `SERVICE_NAME` | `cache-agent` | event `source` and MCP server name |
 | `LOG_LEVEL` | `info` | |
@@ -106,12 +123,25 @@ Domain agent (`agents/domain-agent`):
 | `EDGE_GATEWAY_URL` | `http://edge-gateway.domain-apim` (apim only) |
 | `EDGE_CONFIGMAP` | `domain-apim/edge-gateway-config` (apim only; read via the Kubernetes API with a namespaced Role) |
 
-Maestro: `FLEET_GATEWAY_MCP_URL=http://fleet-gateway.maestro-gateway/agents/mcp`,
-`AGENT_SKILLS=maestro-orchestration`.
+Maestro: `FLEET_GATEWAY_MCP_URL=http://fleet-gateway.maestro-gateway/agents/mcp` (discovery; calls
+go to the per-agent route derived from it, `/agents/<x>/mcp`),
+`AGENT_SKILLS=maestro-orchestration`, `OIDC_CLIENT_ID=maestro`, `OIDC_CLIENT_SECRET=maestro-secret`
+(used only for token exchange), `MAESTRO_AUTH_MODE=exchange|passthrough` (chart value
+`identity.delegation`).
 
 Fleet Console: `MAESTRO_URL=http://maestro.maestro:8000`, `OIDC_CLIENT_ID=fleet-console`,
-`OIDC_CLIENT_SECRET=fleet-console-secret`, `PUBLIC_GRAFANA_URL`, `PUBLIC_PROMETHEUS_URL`,
-`PUBLIC_KEYCLOAK_URL`, `PUBLIC_GATEWAY_URL`, `PUBLIC_EDGE_URL`.
+`OIDC_CLIENT_SECRET=fleet-console-secret`, `MAESTRO_AUTH_MODE` (for display), `PUBLIC_GRAFANA_URL`,
+`PUBLIC_PROMETHEUS_URL`, `PUBLIC_KEYCLOAK_URL`, `PUBLIC_GATEWAY_URL`, `PUBLIC_EDGE_URL`.
+
+## Maestro API (`maestro.maestro:8000`)
+
+| Method & path | Body / result |
+| --- | --- |
+| `POST /api/ask` | bearer: caller's token. `{ "question", "trace_id"?, "auth_mode"? }` → Assessment. `auth_mode` ∈ `exchange` \| `passthrough` overrides `MAESTRO_AUTH_MODE` for this request |
+| `POST /api/delegate` | bearer: caller's token. `{ "audience", "scope"? }` → `{ "subject": <token summary>, "request": {…}, "issued": <token summary> \| null, "error": { "error", "description" } \| null }`. Performs one real exchange; never returns raw tokens |
+| `/mcp` | MCP: tool `ask_maestro(question)` (default mode) |
+
+A *token summary* is `{ sub, username, azp, act, delegated, aud[], roles[], scope, iat, exp, lifetime_s, jti }`.
 
 ## Fleet Console API
 
@@ -120,12 +150,13 @@ Fleet Console: `MAESTRO_URL=http://maestro.maestro:8000`, `OIDC_CLIENT_ID=fleet-
 | `POST /api/events` | one Event (below); fire-and-forget, 202 |
 | `GET /api/stream` | SSE stream of Events (`event: fleet`, `data: <Event JSON>`), replays the last 200 on connect |
 | `GET /api/events?trace_id=` | JSON array of Events |
-| `POST /api/incident` | `{ "title", "service", "description" }` → `{ "trace_id" }`; starts a trace, emits `incident.raised`, asks Maestro asynchronously |
-| `POST /api/ask` | `{ "question" }` → `{ "trace_id" }`; free-form question as the console identity |
+| `POST /api/incident` | `{ "title", "service", "description", "auth_mode"? }` → `{ "trace_id" }`; starts a trace, emits `incident.raised`, asks Maestro asynchronously |
+| `POST /api/ask` | `{ "question", "auth_mode"? }` → `{ "trace_id" }`; free-form question as the console identity |
+| `POST /api/identity/try` | `{ "user": "engineer" \| "sre-lead" \| "fleet-console", "domain": "apim" \| "cache" \| "messaging" }` → Maestro's `/api/delegate` result plus `user`, `domain`, `audience`, `scope`. Real exchange, no trace, no raw tokens (ADR-0015) |
 | `GET /api/assessment/{trace_id}` | the Assessment once posted, else 404 |
 | `GET /api/scenarios` | `[{ "name", "title", "domain", "active" }]` |
 | `POST /api/scenarios/{name}` / `DELETE /api/scenarios/{name}` | apply / clear a fault |
-| `GET /api/topology` | nodes + edges for the UI, including public URLs |
+| `GET /api/topology` | nodes + edges for the UI, public URLs, demo `credentials`, and `identity: { delegation, modes[], domains[], agent_audiences[], obo_lifetime_s }` |
 | `GET /healthz` | |
 
 ## Event schema
@@ -142,10 +173,16 @@ Fleet Console: `MAESTRO_URL=http://maestro.maestro:8000`, `OIDC_CLIENT_ID=fleet-
 }
 ```
 
-`kind` values: `incident.raised`, `question.asked`, `token.issued`,
-`request.sent`, `request.received`, `tools.discovered`, `skills.loaded`,
+`kind` values: `incident.raised`, `question.asked`, `token.issued`, `token.exchanged`,
+`token.refused`, `request.sent`, `request.received`, `tools.discovered`, `skills.loaded`,
 `evidence.gathered`, `llm.turn`, `finding.returned`, `assessment.posted`,
 `scenario.applied`, `scenario.cleared`, `error`.
+
+- `token.exchanged` (source `maestro`, edge → `keycloak`): detail `{ request, subject, issued, target }`
+  where `request` is the exchange request minus secrets, `subject`/`issued` are token summaries.
+- `token.refused` (source `maestro`, edge → `keycloak`): detail `{ request, subject, error, error_description, target }`.
+- `request.sent` from Maestro carries `detail.transport.auth` = `{ mode: "exchange"|"passthrough", scheme, …token summary }`
+  and `detail.transport.agent_audience`.
 
 Node ids for `edge.from` / `edge.to` and `source`: `console`, `ide`, `maestro`,
 `gateway`, `keycloak`, `skills`, `apim-agent`, `cache-agent`, `messaging-agent`,
@@ -168,11 +205,14 @@ Node ids for `edge.from` / `edge.to` and `source`: `console`, `ide`, `maestro`,
   ],
   "recommended_actions": ["Raise maxmemory or evict the filler keyspace", "…"],
   "skills_used": ["cache-observability", "prometheus-observability"],
-  "caller": { "sub": "service-account-fleet-console", "azp": "fleet-console" }
+  "caller": { "sub": "a6f0d810-…", "username": "service-account-fleet-console", "azp": "maestro",
+              "act": "maestro", "delegated": true, "aud": ["cache-agent"], "roles": ["domain:cache"] }
 }
 ```
 
-`confidence` is 0–1. `implicated=false` with high confidence means "cleared".
+`confidence` is 0–1. `implicated=false` with high confidence means "cleared". `caller` is
+who the finding was produced for (`sub`, `username`) and who presented the token (`azp`,
+`act`); `delegated=false` with `azp` = the caller's own client means passthrough.
 
 ## Assessment schema (Maestro)
 
@@ -186,10 +226,15 @@ Node ids for `edge.from` / `edge.to` and `source`: `console`, `ide`, `maestro`,
   "not_consulted": [{ "domain": "messaging", "reason": "caller lacks role domain:messaging" }],
   "next_step_for_human": "Roll back change CHG0123 on the edge gateway route /api/members.",
   "findings": [ "…full Finding objects…" ],
+  "caller": { "sub": "…", "azp": "fleet-console", "username": "service-account-fleet-console" },
+  "auth_mode": "exchange",
   "model": "claude-opus-5-5",
   "duration_ms": 41873
 }
 ```
+
+`not_consulted[].reason` is one of `caller lacks role domain:<d>` (hidden by the gateway),
+`delegation refused by Keycloak: <description>` (ADR-0015) or `agent error: <message>`.
 
 ## Skills layout
 

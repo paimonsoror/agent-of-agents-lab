@@ -49,7 +49,8 @@ flowchart LR
 
   FC -->|JWT| M
   IDE -->|JWT| AG
-  M -->|MCP + JWT| AG
+  M -.->|token exchange: on-behalf-of| KC
+  M -->|MCP + OBO JWT per agent| AG
   AG -->|MCP + JWT passthrough| A1 & A2 & A3
   A1 --> P1
   A2 --> P2
@@ -68,7 +69,7 @@ flowchart LR
 | Consumers | Engineer in IDE | Copilot / Claude Code with MCP | Proves "same agents, same tools" — the IDE connects to the same gateway endpoint |
 | Orchestration | Maestro | — | The agent of agents; Opus 5.5 at high effort ([ADR-0010](adr/0010-claude-models-and-effort.md)) |
 | Fleet gateway | agentgateway | Kong AI Gateway / Konnect | Only OSS gateway that is MCP- *and* A2A-native with JWT + per-tool RBAC ([ADR-0003](adr/0003-agentgateway-as-fleet-gateway.md)) |
-| Identity | Keycloak | Entra ID / Okta | Non-human identities as OAuth clients; roles in JWT claims ([ADR-0005](adr/0005-keycloak-identity-and-token-propagation.md)) |
+| Identity | Keycloak | Entra ID / Okta | Non-human identities as OAuth clients; roles in JWT claims ([ADR-0005](adr/0005-keycloak-identity-and-token-propagation.md)); on-behalf-of tokens by token exchange ([ADR-0015](adr/0015-on-behalf-of-token-exchange.md)) |
 | Domain: API management | second agentgateway as the *edge* | Kong Konnect | The platform a domain team would run; its config is a declarative file so change history is inspectable |
 | Domain: cache | Valkey + redis_exporter | Redis Enterprise | Native Prometheus export; evictions and hit ratio are textbook signals |
 | Domain: messaging | Kafka (KRaft) + kafka-exporter | Kafka / IBM MQ | Consumer lag is the signal every messaging SRE watches first |
@@ -87,21 +88,26 @@ flowchart LR
    tools. The gateway only returns the tools the caller's roles allow — a caller
    without `domain:messaging` never sees the messaging agent. Maestro reasons about
    which domains are relevant and calls their `assess` tools in parallel.
-3. **Gateway.** agentgateway validates the JWT against Keycloak's JWKS (issuer,
+3. **Delegation.** Before each call, Maestro asks Keycloak to exchange the caller's
+   token for an **on-behalf-of token** (RFC 8693): same subject, but addressed to that
+   one agent, carrying that one domain role, valid for five minutes, with Maestro
+   recorded as the carrier (`act`). Keycloak refuses if the caller lacks the role.
+4. **Gateway.** agentgateway validates the JWT against Keycloak's JWKS (issuer,
    audience, expiry), evaluates CEL authorization rules per tool and target, passes
    the token through to the chosen domain agent, and records metrics for Prometheus.
-4. **Domain agent.** The agent verifies the JWT again (defence in depth, and so it
-   can log *who* asked), loads its skills, and runs its own LLM loop with two kinds of
+5. **Domain agent.** The agent verifies the JWT again (it must be addressed to this
+   agent; defence in depth, and so it can log *who* asked and *who carried* the
+   token), loads its skills, and runs its own LLM loop with two kinds of
    tools: platform-native ones (Valkey `INFO`, Kafka consumer-group lag, the edge
    gateway's route config and change annotations) and the shared Prometheus. It
    returns a structured **finding** — implicated or not, confidence, evidence with
    deep links into Grafana, recommended actions.
-5. **Assessment.** Maestro consolidates the findings into one **assessment**: which
+6. **Assessment.** Maestro consolidates the findings into one **assessment**: which
    domains are implicated, which are cleared, which could not be consulted and why,
    and the recommended next step for the human. It posts the assessment back to the
    console (and returns it to the IDE).
-6. **Visibility.** Every component emits events to the console's event hub as it
-   works (`request.received`, `skills.loaded`, `evidence.gathered`,
+7. **Visibility.** Every component emits events to the console's event hub as it
+   works (`token.exchanged`, `request.received`, `skills.loaded`, `evidence.gathered`,
    `finding.returned`, …). The console animates the flow on the topology and keeps a
    timeline. Executives watch the system think.
 
@@ -110,13 +116,22 @@ flowchart LR
 - Every service that calls another presents a **JWT issued by Keycloak**. Services are
   OAuth clients with service accounts (non-human identities). Human engineers are
   realm users. Roles are realm roles carried in `realm_access.roles`.
-- **Token propagation, not token minting.** Maestro forwards the *caller's* token to
-  the domain agents. Authorization is therefore end-to-end per caller; Maestro cannot
-  escalate. This keeps non-human identity management to one place (Keycloak) and one
-  mechanism (JWT), which is the explicit reason we start with MCP rather than A2A.
-- The gateway is the **policy enforcement point**: JWT validation, tool-level RBAC,
-  CORS, metrics, audit logs. Domain agents are **secondary enforcement**: they verify
-  the same token so a bypass of the gateway buys nothing.
+- **Delegation, not propagation and not minting.** An agent should not hold the same
+  permissions as the person who asked. Maestro therefore exchanges the caller's token
+  at Keycloak for an on-behalf-of token per agent: `sub` stays the caller, `azp`/`act`
+  become `maestro`, `aud` is the one agent, the roles shrink to that domain, and it
+  expires in minutes. Authorization is still end-to-end per caller (Keycloak refuses
+  to delegate a role the caller lacks), Maestro still cannot escalate, and every
+  finding now records both the person and the carrier. The legacy passthrough mode is
+  kept for comparison. Plain-language explainer: [identity-on-behalf-of.md](identity-on-behalf-of.md);
+  decision: [ADR-0015](adr/0015-on-behalf-of-token-exchange.md).
+- Non-human identity stays in one place (Keycloak) with one mechanism (JWT), which is
+  the explicit reason we start with MCP rather than A2A.
+- The gateway is the **policy enforcement point**: JWT validation (any of the accepted
+  audiences), tool-level RBAC from the roles on the token, CORS, metrics, audit logs.
+  Domain agents are **secondary enforcement**: they verify the token again and insist it
+  is addressed to them, so a bypass of the gateway, or a token minted for a different
+  agent, buys nothing.
 - **A2A north star.** When agent cards and task lifecycles are needed, the same
   gateway routes A2A (`a2a: {}` policy) with the same JWT policies. See ADR-0004.
 

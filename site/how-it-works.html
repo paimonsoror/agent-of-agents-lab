@@ -46,19 +46,18 @@
 <section>
   <div class="wrap">
     <span class="eyebrow">What travels on the wire</span>
-    <h2>Every hop is an MCP call carrying the caller's JWT</h2>
+    <h2>Every hop is an MCP call carrying a JWT issued for exactly that hop</h2>
     <div class="split">
       <div class="card reveal">
         <h3><i data-icon="gateway" data-size="20"></i>Maestro → apim_assess, via the fleet gateway</h3>
-        <p>Maestro composes its own question for each agent, adding the context it has. The gateway authorises the hop with a CEL rule, then passes the token through unchanged.</p>
+        <p>Maestro composes its own question for each agent, adding the context it has. The bearer token is the on-behalf-of token Keycloak just issued for this agent; the gateway authorises the hop with a CEL rule on the role it carries, then passes it through unchanged.</p>
 <pre><code>MCP tools/call · Streamable HTTP
-endpoint   http://agent-gateway.maestro-gateway:4000/agents/mcp
+endpoint   http://fleet-gateway.maestro-gateway/agents/apim/mcp
 target     apim-agent  (tool apim_assess)
-rule       mcp.tool.target == "apim" &amp;&amp;
-           "domain:apim" in jwt.realm_access.roles
-auth       Bearer &lt;caller's JWT&gt;  (propagated, never re-minted)
-           sub=service-account-fleet-console
-           roles=[maestro:ask, domain:apim, domain:cache, domain:messaging]
+rule       "domain:apim" in jwt.realm_access.roles
+auth       Bearer &lt;on-behalf-of JWT&gt;  (RFC 8693 token exchange)
+           sub=service-account-fleet-console   azp=maestro   act=maestro
+           aud=apim-agent   roles=[domain:apim]   exp=+300 s
 trace_id   trc-20261016-040020-8a1f</code></pre>
       </div>
       <div class="card reveal d1">
@@ -110,11 +109,11 @@ trace_id   trc-20261016-040020-8a1f</code></pre>
       { who: "Fleet gateway", title: "What am I allowed to call?",
         text: `Maestro connects to the fleet gateway's MCP endpoint <b>with the caller's token</b> and asks for the tool list. agentgateway validates the JWT against Keycloak's JWKS (issuer, audience, expiry), then evaluates a CEL rule per tool. ${ide ? "The engineer lacks <code>domain:messaging</code>, so the gateway simply does not return the messaging tools. Maestro cannot ask for what it cannot see." : "The console's identity holds all three domain roles, so all six tools come back."}`,
         log: [L("", `<span class="k">tools.discovered</span>  ${ide ? 4 : 6} tools`), L("dim", `apim_assess  apim_health  cache_assess  cache_health${ide ? "" : "  messaging_assess  messaging_health"}`), ...(ide ? [L("bad", `hidden by gateway: messaging_* (caller lacks domain:messaging)`)] : [])] },
-      { who: "Maestro → agents", title: "Fan-out, in parallel",
-        text: `Maestro reasons about which domains could explain the symptom and calls their <code>assess</code> tools at once, each with a question it composed itself: "${ide ? "Is the member portal healthy? Check your platform and the shared monitoring for the last 30 minutes." : "Member portal routes returning 503 at the edge since ~03:50 UTC. Is your domain implicated?"}" The gateway authorises each hop and passes the same token through.`,
-        log: [L("", `<span class="k">request.sent</span>  apim_assess       via fleet gateway`), L("", `<span class="k">request.sent</span>  cache_assess      via fleet gateway`), ide ? L("dim", `messaging: not consulted (no tool visible)`) : L("", `<span class="k">request.sent</span>  messaging_assess  via fleet gateway`)] },
+      { who: "Maestro → Keycloak → agents", title: "One badge per agent, then fan-out",
+        text: `Maestro reasons about which domains could explain the symptom. For each one it first asks Keycloak to exchange the caller's token for an <b>on-behalf-of token</b>: same person, but addressed to that one agent, carrying that one role, valid five minutes, stamped with Maestro as the carrier (<a href="identity.html">how that works</a>). Then it calls the <code>assess</code> tools at once, each with a question it composed itself: "${ide ? "Is the member portal healthy? Check your platform and the shared monitoring for the last 30 minutes." : "Member portal routes returning 503 at the edge since ~03:50 UTC. Is your domain implicated?"}" The gateway checks the role on each badge; the agent checks the badge is addressed to it.`,
+        log: [L("", `<span class="k">token.exchanged</span>  apim-agent   sub=${ide ? "engineer" : "fleet-console"} azp=maestro roles=[domain:apim] exp=+300s`), L("", `<span class="k">token.exchanged</span>  cache-agent  roles=[domain:cache] exp=+300s`), ide ? L("dim", `messaging: not consulted (no tool visible; Keycloak would refuse the exchange)`) : L("", `<span class="k">token.exchanged</span>  messaging-agent  roles=[domain:messaging] exp=+300s`), L("", `<span class="k">request.sent</span>  apim_assess       via fleet gateway  (on-behalf-of)`), L("", `<span class="k">request.sent</span>  cache_assess      via fleet gateway  (on-behalf-of)`), ...(ide ? [] : [L("", `<span class="k">request.sent</span>  messaging_assess  via fleet gateway  (on-behalf-of)`)])] },
       { who: "Domain agents", title: "Evidence, from the platform and from Prometheus",
-        text: "Each agent (Claude Sonnet 5.5) verifies the JWT again, loads its domain skill plus the shared Prometheus skill, and runs its own tool loop. Platform-native tools read the edge gateway's route config and change annotations, Valkey's <code>INFO</code>, Kafka consumer-group lag. PromQL turns a signal into evidence, with a Grafana deep link to the panel it read.",
+        text: "Each agent (Claude Sonnet 5.5) verifies the on-behalf-of JWT itself (it must be addressed to this agent), loads its domain skill plus the shared Prometheus skill, and runs its own tool loop. Platform-native tools read the edge gateway's route config and change annotations, Valkey's <code>INFO</code>, Kafka consumer-group lag. PromQL turns a signal into evidence, with a Grafana deep link to the panel it read.",
         log: [L("", `<span class="k">evidence.gathered</span>  apim   edge route /api/members → portal-api-v2 (no such service)`), L("dim", `apim   change-id=CHG0123 by platform-apim-bot at 03:58:50Z`), L("dim", `apim   sum(rate(agentgateway_requests_total{status=~"5.."}[5m])) = 0.97`), L("", `<span class="k">evidence.gathered</span>  cache  hit ratio 0.93, evictions 0, used_memory 11 MiB / 64 MiB`), ...(ide ? [] : [L("", `<span class="k">evidence.gathered</span>  messaging  lag(portal-consumer)=0, consumer active`)])] },
       { who: "Agents → Maestro", title: "Findings come back",
         text: "Every agent returns the same structured finding: implicated or not, a confidence score, the evidence it used, recommended actions. A \"cleared\" verdict is a real answer: the agent had to prove its platform is fine.",

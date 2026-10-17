@@ -57,11 +57,12 @@
 <section>
   <div class="wrap">
     <span class="eyebrow">What the lab demonstrates</span>
-    <h2>Seven claims, each backed by running code</h2>
+    <h2>Eight claims, each backed by running code</h2>
     <div class="cards">
       <div class="card reveal"><h3><i data-icon="skills" data-size="22"></i>Federated, domain-scoped cognition</h3><p>Each agent is driven by a <code>SKILL.md</code> bundle in the <a href="https://agentskills.io" rel="noopener">agentskills.io</a> format for its domain, plus a shared Prometheus skill. The domain team owns the knowledge; the Python stays plumbing.</p><a href="cognition.html">How cognition works →</a></div>
       <div class="card reveal d1"><h3><i data-icon="gateway" data-size="22"></i>Agent-to-agent transport with real identity</h3><p>MCP over an open-source AI gateway. Every hop carries a Keycloak-issued JWT, and the gateway filters tools by the caller's roles before the orchestrator can even see them.</p><a href="architecture.html#identity">Identity and trust →</a></div>
-      <div class="card reveal d2"><h3><i data-icon="maestro" data-size="22"></i>A2A as the north star</h3><p>The same gateway speaks A2A. Moving from MCP is a routing-policy change and one adapter, recorded in ADR-0004, once non-human identity is mature enough.</p><a href="decisions.html">Read the decisions →</a></div>
+      <div class="card reveal d2"><h3><i data-icon="keycloak" data-size="22"></i>Agents act on behalf of a person, with less than that person's rights</h3><p>Maestro never hands an agent the caller's badge. It asks Keycloak for a five-minute token addressed to that one agent, carrying that one role, stamped with Maestro as the carrier. Keycloak refuses what the caller never had.</p><a href="identity.html">On behalf of, explained →</a></div>
+      <div class="card reveal d3"><h3><i data-icon="maestro" data-size="22"></i>A2A as the north star</h3><p>The same gateway speaks A2A. Moving from MCP is a routing-policy change and one adapter, recorded in ADR-0004, once non-human identity is mature enough.</p><a href="decisions.html">Read the decisions →</a></div>
       <div class="card reveal d3"><h3><i data-icon="prometheus" data-size="22"></i>Monitoring every domain already sends to</h3><p>Prometheus and Grafana stand in for the enterprise tool. All platforms export natively. Agents query PromQL and cite the exact Grafana panel they read.</p><a href="architecture.html#monitoring">Shared monitoring →</a></div>
       <div class="card reveal"><h3><i data-icon="console" data-size="22"></i>Executive-grade visibility</h3><p>The Fleet Console animates each request live and lets anyone click a box for a play-by-play: what was asked, what Maestro asked each agent, and how.</p><a href="console.html">Fleet Console →</a></div>
       <div class="card reveal d1"><h3><i data-icon="ide" data-size="22"></i>Same agents, same tools, in the IDE</h3><p>Claude Code, Copilot or Cursor connect to the same gateway endpoint with the engineer's own token. What they are not entitled to, they never see.</p><a href="get-started.html#ide">IDE setup →</a></div>
@@ -113,7 +114,7 @@
     "1 · The caller gets its own identity: a JWT from Keycloak",
     "2 · Maestro receives the question and loads its orchestration skill",
     "3 · The gateway lists only the tools the caller's roles allow",
-    "4 · Fan-out: the relevant domain agents are consulted in parallel",
+    "4 · Keycloak issues one on-behalf-of token per agent; fan-out in parallel",
     "5 · Agents gather evidence from their platform and from Prometheus",
     "6 · Findings return: one domain implicated, the others cleared",
     "7 · Maestro posts one consolidated assessment to the caller",

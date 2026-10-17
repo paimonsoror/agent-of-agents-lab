@@ -1,0 +1,410 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Identity — Maestro</title>
+<meta name="description" content="How agents act on behalf of a person without holding that person's rights: on-behalf-of tokens by OAuth token exchange, explained with a visitor-badge analogy and animated against the real lab.">
+<link rel="stylesheet" href="assets/site.css">
+<script src="assets/icons.js"></script>
+<script src="assets/site.js"></script>
+<script src="assets/topology.js"></script>
+</head>
+<body>
+<header id="site-header"></header>
+
+<section class="hero">
+  <div class="wrap grid">
+    <div>
+      <span class="eyebrow">Identity · on behalf of</span>
+      <h1>An agent should not hold the <span>person's keys</span>.</h1>
+      <p class="lede">When a person asks Maestro a question, the domain agents answer <i>for</i> that person. They need enough permission to do their one job, for as long as the job takes, and no more. This page explains how the lab does that, without assuming you know anything about authentication.</p>
+      <div class="cta">
+        <a class="btn primary" href="#walkthrough">Watch a badge being narrowed →</a>
+        <a class="btn" href="https://github.com/paimonsoror/agent-of-agents-lab/blob/main/docs/identity-on-behalf-of.md" rel="noopener">Read the explainer</a>
+      </div>
+      <p class="muted" style="margin-top:18px;font-size:.9rem">Everything shown here is live in the lab: press <b>Identity</b> in the Fleet Console to run a real exchange against Keycloak, or <code>make obo-demo</code> from a terminal.</p>
+    </div>
+    <div class="token-stage reveal">
+      <div class="stations-wrap">
+        <div class="moving" id="moving">
+          <div class="idbadge full" id="moving-badge"></div>
+        </div>
+        <div class="stations" id="stations">
+          <div class="station" data-s="0"><i data-icon="ide" data-size="20"></i>engineer<small>the person asking</small></div>
+          <div class="station" data-s="1"><i data-icon="maestro" data-size="20"></i>Maestro<small>needs to ask an agent</small></div>
+          <div class="station" data-s="2"><i data-icon="keycloak" data-size="20"></i>Keycloak<small>issues badges</small></div>
+          <div class="station" data-s="3"><i data-icon="agent" data-size="20"></i>cache-agent<small>answers for the person</small></div>
+        </div>
+      </div>
+      <div class="station-caption" id="station-caption"></div>
+      <div class="step-dots" id="station-dots"></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <span class="eyebrow">The problem in one picture</span>
+    <h2>A token is a visitor badge</h2>
+    <p class="lede">A token is a signed note from the identity provider: who you are, which doors you may open, until when. Hand an agent the person's own badge and you give it every door the person has, for the whole day, with no trace of who carried it.</p>
+    <div class="badge-grid">
+      <div class="idbadge full reveal">
+        <div class="hd"><span>What engineer holds</span><span class="pill warn">caller's badge</span></div>
+        <div class="row"><span class="k">who</span><span>engineer</span></div>
+        <div class="row"><span class="k">carried by</span><span class="muted">nobody says</span></div>
+        <div class="row"><span class="k">addressed to</span><span><code>maestro-gateway</code>, <code>maestro</code></span></div>
+        <div class="row"><span class="k">may open</span><span><code>apim</code> <code>cache</code> <span class="muted">(and may ask Maestro)</span></span></div>
+        <div class="row"><span class="k">valid for</span><span>8 hours</span></div>
+      </div>
+      <div class="idbadge obo reveal d1">
+        <div class="hd"><span>What cache-agent actually needs</span><span class="pill accent">one job</span></div>
+        <div class="row"><span class="k">who</span><span class="keep">engineer</span></div>
+        <div class="row"><span class="k">carried by</span><span class="add">Maestro, for engineer</span></div>
+        <div class="row"><span class="k">addressed to</span><span class="add"><code>cache-agent</code></span></div>
+        <div class="row"><span class="k">may open</span><span><span class="del">apim</span> <span class="add"><code>cache</code></span></span></div>
+        <div class="row"><span class="k">valid for</span><span><span class="del">8 hours</span> <span class="add">5 minutes</span></span></div>
+      </div>
+    </div>
+    <p class="muted" style="margin-top:14px">Same person. Narrower badge. That narrowing is called <b>delegation</b>: the agent acts <i>on behalf of</i> the person, with a subset of the person's rights, and the badge says so.</p>
+  </div>
+</section>
+
+<section id="walkthrough">
+  <div class="wrap">
+    <span class="eyebrow">Walkthrough</span>
+    <h2>Four steps, on the real topology</h2>
+    <p class="lede">Pick who is asking and which agent Maestro wants to consult. Then step through what happens. Try <b>engineer</b> with <b>messaging</b>: Keycloak refuses, because the engineer never held that door.</p>
+    <div class="stage-controls">
+      <button class="btn small primary" id="play">▶ Play</button>
+      <button class="btn small" id="prev">← Back</button>
+      <button class="btn small" id="next">Next →</button>
+      <span class="spacer"></span>
+      <span class="muted" style="font-size:.85rem">Who asks:</span>
+      <div class="toggle" role="group" aria-label="Caller">
+        <button class="on" data-caller="ide">engineer</button>
+        <button data-caller="sre">sre-lead</button>
+        <button data-caller="console">Fleet Console</button>
+      </div>
+      <span class="muted" style="font-size:.85rem">Agent:</span>
+      <div class="toggle" role="group" aria-label="Domain">
+        <button data-domain="apim">apim</button>
+        <button class="on" data-domain="cache">cache</button>
+        <button data-domain="messaging">messaging</button>
+      </div>
+    </div>
+    <div class="progress"><i id="bar"></i></div>
+    <div class="steps" id="steps"></div>
+    <div class="walk">
+      <div class="stage" id="stage"></div>
+      <div class="narrative" id="narrative"></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <span class="eyebrow">Real tokens from the lab</span>
+    <h2>What Keycloak actually issued</h2>
+    <p class="lede">These are the claims of real tokens, trimmed. The exchange is the OAuth 2.0 <i>token exchange</i> standard (RFC 8693). Microsoft Entra calls the same pattern the <i>on-behalf-of flow</i>, which is where the name comes from.</p>
+    <div class="tabs" id="tabs">
+      <button class="on" data-case="eng-cache">engineer → cache-agent</button>
+      <button data-case="eng-messaging">engineer → messaging-agent</button>
+      <button data-case="sre-messaging">sre-lead → messaging-agent</button>
+      <button data-case="console-apim">Fleet Console → apim-agent</button>
+    </div>
+    <div class="split">
+      <div class="card">
+        <h3><i data-icon="keycloak" data-size="20"></i>The caller's badge (subject token)</h3>
+        <pre><code id="subject-claims"></code></pre>
+        <p class="muted" style="font-size:.85rem;margin:0">Obtained by the IDE (password grant on <code>ide-cli</code>) or by the console (client credentials). Note <code>aud</code> includes <code>maestro</code>: Keycloak only exchanges a token that names the requester.</p>
+      </div>
+      <div class="card">
+        <h3><i data-icon="maestro" data-size="20"></i>What Maestro gets back</h3>
+        <div id="issued-box"></div>
+        <p class="muted" style="font-size:.85rem;margin:10px 0 0" id="issued-note"></p>
+      </div>
+    </div>
+<pre><code id="exchange-request">POST /realms/maestro/protocol/openid-connect/token
+grant_type=urn:ietf:params:oauth:grant-type:token-exchange
+client_id=maestro            client_secret=…          ← Maestro proves it is Maestro
+subject_token=&lt;the caller's token&gt;                    ← on behalf of whom
+subject_token_type=urn:ietf:params:oauth:token-type:access_token
+requested_token_type=urn:ietf:params:oauth:token-type:access_token
+audience=cache-agent         scope=domain-cache        ← for which agent, which door</code></pre>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <span class="eyebrow">Two locks</span>
+    <h2>Who checks what, on the way down</h2>
+    <div class="table-wrap"><table class="compare">
+      <thead><tr><th>Where</th><th>Check</th><th>Effect on an on-behalf-of badge</th></tr></thead>
+      <tbody>
+        <tr><td>Fleet gateway, route <code>/agents/cache/mcp</code></td><td>Signature, issuer, expiry, and <code>aud</code> is <code>cache-agent</code> (or the gateway audience for direct callers). Maestro calls each agent through its own route.</td><td>A badge for another agent is refused at the door</td></tr>
+        <tr><td>Fleet gateway</td><td>Per-tool rule: <code>"domain:cache" in jwt.realm_access.roles</code></td><td>Only the cache tools are listed or callable: the badge carries one role</td></tr>
+        <tr><td>Domain agent</td><td><code>aud</code> must contain its own name (or the gateway audience for direct callers)</td><td>A badge minted for cache-agent is refused by apim-agent, even if it got there</td></tr>
+        <tr><td>Domain agent</td><td>Records <code>sub</code>, <code>azp</code>, <code>act</code>, <code>aud</code> in every finding</td><td>Chain of custody: who it was for, who carried it</td></tr>
+        <tr><td>Keycloak</td><td>Before any of this: does the caller hold the role behind the requested audience?</td><td>If not, no badge is issued at all</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <span class="eyebrow">Side by side</span>
+    <h2>Passthrough versus on behalf of</h2>
+    <p class="lede">The lab keeps the older passthrough mode switchable (per request from the console's incident intake, or as the default) so the two can be compared on the same incident.</p>
+    <div class="table-wrap"><table class="compare">
+      <thead><tr><th></th><th>Passthrough (ADR-0005)</th><th>On behalf of (ADR-0015)</th></tr></thead>
+      <tbody>
+        <tr><td>What the agent receives</td><td>The caller's own badge</td><td>A badge issued to Maestro <i>for</i> the caller</td></tr>
+        <tr><td>Doors it opens</td><td>Every domain the caller holds</td><td>Exactly one agent</td></tr>
+        <tr><td>Lifetime</td><td>8 hours</td><td>5 minutes</td></tr>
+        <tr><td>Who is recorded</td><td>The caller only</td><td>The caller, and Maestro as carrier (<code>act</code>)</td></tr>
+        <tr><td>If a badge leaks from an agent</td><td>The holder is the caller, everywhere, all day</td><td>The holder reaches one agent for minutes, and the log says Maestro carried it</td></tr>
+        <tr><td>Can Maestro exceed the caller?</td><td>No</td><td>No: Keycloak refuses what the caller lacks</td></tr>
+        <tr><td>Extra cost</td><td>none</td><td>one Keycloak round-trip per agent call (about 20 ms)</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <span class="eyebrow">Why not…</span>
+    <h2>The alternatives, and why they lost</h2>
+    <div class="why">
+      <div class="card reveal"><h3>…give Maestro its own badge?</h3><p>Then every agent sees "Maestro asked" and nothing else: no person, so no way to limit Maestro to what <i>this</i> person may do. Every caller would inherit Maestro's full reach. That is the classic <i>confused deputy</i>. Maestro's own identity is used for exactly one thing: proving to Keycloak that it is Maestro asking for the exchange.</p></div>
+      <div class="card reveal d1"><h3>…just pass the person's badge through?</h3><p>It works, and it was the lab's first design. But the agent holds every door for hours, and nothing says who carried the badge. Kept as a switchable comparison mode, not as the default.</p></div>
+      <div class="card reveal d2"><h3>…let Maestro pretend to be the person?</h3><p>Impersonation (a new badge with no <code>act</code>) is indistinguishable from the person acting alone. The whole point is the chain of custody. Rejected.</p></div>
+      <div class="card reveal d3"><h3>…build a second identity provider?</h3><p>In an enterprise the person's badge comes from the corporate IdP (Entra, Okta) and the agent platform has a realm that trusts it. We considered building that here. But the narrowing happens inside the platform realm either way, because that is the only place that knows the agents exist. One realm shows it truthfully; the enterprise mapping is one brokering link away.</p></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <span class="eyebrow">Glossary</span>
+    <h2>The words on the badges</h2>
+    <div class="split">
+      <dl class="glossary">
+        <dt>token / JWT</dt><dd>The badge: a signed JSON note from Keycloak. Anyone can read it; nobody can forge it.</dd>
+        <dt>sub</dt><dd>Who the badge is for. Stays the person through the whole chain.</dd>
+        <dt>azp</dt><dd>Which application the badge was issued to: <code>ide-cli</code> for the person's own badge, <code>maestro</code> for the on-behalf-of badge.</dd>
+        <dt>act</dt><dd>"Actor": who is carrying the badge on the person's behalf. Present only on delegated badges.</dd>
+      </dl>
+      <dl class="glossary">
+        <dt>aud</dt><dd>"Audience": who the badge is addressed to. An agent refuses badges addressed to someone else.</dd>
+        <dt>realm_access.roles</dt><dd>The doors: <code>domain:cache</code> means "may consult the cache agent". The gateway reads this.</dd>
+        <dt>scope</dt><dd>What Maestro asked for in the exchange; <code>domain-cache</code> maps to the one role and the one audience.</dd>
+        <dt>token exchange</dt><dd>RFC 8693: trade one badge for a narrower one, authenticated as the carrier. Keycloak calls it standard token exchange.</dd>
+      </dl>
+    </div>
+    <p class="muted">Decision record: <a href="decisions.html">ADR-0015</a>. Plain-language document with the technical appendix: <a href="https://github.com/paimonsoror/agent-of-agents-lab/blob/main/docs/identity-on-behalf-of.md" rel="noopener">docs/identity-on-behalf-of.md</a>. In the console: the <b>Identity</b> button, and the Keycloak box's play-by-play after any incident.</p>
+  </div>
+</section>
+
+<footer id="site-footer"></footer>
+
+<script>
+(function () {
+  // ---------------------------------------------------------------- hero: the moving badge
+  const FULL = { who: "engineer", by: "<span class='muted'>nobody says</span>", to: "<code>maestro-gateway</code> <code>maestro</code>", open: "<code>apim</code> <code>cache</code>", valid: "8 hours", cls: "full", title: "engineer's own badge" };
+  const OBO = { who: "engineer", by: "Maestro, for engineer", to: "<code>cache-agent</code>", open: "<code>cache</code>", valid: "5 minutes", cls: "obo", title: "on-behalf-of badge" };
+  const STATION_STEPS = [
+    { s: 0, b: FULL, cap: "The engineer holds a badge from Keycloak: two doors, eight hours. It arrives with the question." },
+    { s: 1, b: FULL, cap: "Maestro receives it. It must not hand this badge to an agent: the cache agent would get the apim door too, for the rest of the day." },
+    { s: 2, b: FULL, cap: "Maestro shows Keycloak the badge and asks: \"a badge on behalf of engineer, for cache-agent only.\" Keycloak checks that engineer really holds the cache door." },
+    { s: 2, b: OBO, cap: "Keycloak issues a new badge: same person, addressed to cache-agent, one door, five minutes, stamped \"carried by Maestro\"." },
+    { s: 3, b: OBO, cap: "cache-agent checks the badge is addressed to it, does its job, and records who it worked for and who carried the badge." },
+  ];
+  const mv = document.getElementById("moving"), mb = document.getElementById("moving-badge"), cap = document.getElementById("station-caption"), dots = document.getElementById("station-dots");
+  const stations = Array.from(document.querySelectorAll(".station"));
+  dots.innerHTML = STATION_STEPS.map(() => "<i></i>").join("");
+  function renderBadge(b) {
+    mb.className = "idbadge " + b.cls;
+    mb.innerHTML = `<div class="hd"><span>${b.title}</span></div>` +
+      [["who", b.who], ["carried by", b.by], ["addressed to", b.to], ["may open", b.open], ["valid for", b.valid]].map(([k, v]) => `<div class="row"><span class="k">${k}</span><span>${v}</span></div>`).join("");
+  }
+  let hs = 0;
+  function placeHero() {
+    const st = STATION_STEPS[hs];
+    stations.forEach((e, i) => e.classList.toggle("lit", i === st.s));
+    const r = stations[st.s].getBoundingClientRect(), p = stations[st.s].parentElement.parentElement.getBoundingClientRect();
+    mv.style.left = (r.left - p.left + r.width / 2) + "px";
+    renderBadge(st.b);
+    cap.textContent = st.cap;
+    Array.from(dots.children).forEach((d, i) => d.classList.toggle("on", i === hs));
+  }
+  placeHero();
+  setInterval(() => { hs = (hs + 1) % STATION_STEPS.length; placeHero(); }, 3200);
+  window.addEventListener("resize", placeHero);
+
+  // ---------------------------------------------------------------- walkthrough on the topology
+  const stage = document.getElementById("stage"), nar = document.getElementById("narrative"), stepsEl = document.getElementById("steps"), bar = document.getElementById("bar");
+  const t = MaestroTopology.render(stage, {});
+  const ROLES = { ide: ["apim", "cache"], sre: ["apim", "cache", "messaging"], console: ["apim", "cache", "messaging"] };
+  const NAMES = { ide: "engineer", sre: "sre-lead", console: "service-account-fleet-console" };
+  const NODE = { ide: "ide", sre: "ide", console: "console" };
+  let caller = "ide", domain = "cache", idx = -1, playing = false, run = 0;
+  const L = (cls, s) => `<div class="${cls || ""}">${s}</div>`;
+  const sleep = MaestroSite.sleep;
+
+  function STEPS() {
+    const name = NAMES[caller], allowed = ROLES[caller].includes(domain), agent = `${domain}-agent`;
+    const roles = ["maestro:ask", ...ROLES[caller].map(d => `domain:${d}`)];
+    return [
+      { who: name, title: "The caller holds their own badge",
+        text: `${caller === "console" ? "The Fleet Console" : "The engineer's IDE"} obtains a token from Keycloak and sends the question to Maestro with it. The badge lists every door ${caller === "console" ? "the console" : "the person"} holds, and it is addressed to the gateway and to Maestro.`,
+        log: [L("", `<span class="k">token.issued</span>  sub=${name}  azp=${caller === "console" ? "fleet-console" : "ide-cli"}`), L("dim", `aud=[maestro-gateway, maestro]  roles=[${roles.join(", ")}]  exp=+8h`)] },
+      { who: "Maestro", title: "Maestro will not hand that badge on",
+        text: `Maestro decides it needs the <b>${domain}</b> agent. Handing the agent the caller's badge would give it ${ROLES[caller].length} door${ROLES[caller].length === 1 ? "" : "s"} for eight hours. Instead it prepares a request to Keycloak for a badge on behalf of ${name}, for ${agent} only.`,
+        log: [L("", `<span class="k">request</span>  grant=token-exchange  audience=${agent}  scope=domain-${domain}`), L("dim", `client_id=maestro (authenticated with its own secret)  subject_token=&lt;${name}'s token&gt;`)] },
+      { who: "Keycloak", title: allowed ? "Keycloak checks the door, then issues a narrower badge" : "Keycloak refuses",
+        text: allowed
+          ? `Keycloak verifies that ${name} holds <code>domain:${domain}</code>, then issues a new token: same subject, addressed to <code>${agent}</code>, carrying only <code>domain:${domain}</code>, valid five minutes, with <code>act</code> naming Maestro as the carrier.`
+          : `${name} does not hold <code>domain:${domain}</code>, so there is no door to delegate. Keycloak answers <i>Requested audience not available: ${agent}</i>. Maestro cannot borrow a right the caller never had; the domain is reported as <b>not consulted</b>. (In practice the gateway already hid this agent's tools from the caller, so Maestro never tries; the refusal is the safety net underneath.)`,
+        log: allowed
+          ? [L("", `<span class="k">token.exchanged</span>  sub=${name}  azp=maestro  act=maestro`), L("ok", `aud=${agent}  roles=[domain:${domain}]  exp=+300s`)]
+          : [L("bad", `token.refused  invalid_request: Requested audience not available: ${agent}`), L("dim", `not_consulted: ${domain} — delegation refused by Keycloak`)] },
+      { who: "Gateway → agent", title: allowed ? "Two locks, both real" : "Nothing to present",
+        text: allowed
+          ? `Maestro presents the on-behalf-of badge. The fleet gateway validates it and applies the per-tool rule: the badge carries <code>domain:${domain}</code>, so only the ${domain} tools are callable. ${agent} verifies the token again and insists it is addressed to <code>${agent}</code>. Its finding records who it worked for (${name}) and who carried the badge (Maestro).`
+          : `No badge, no call. Maestro's assessment lists <b>${domain}</b> under not consulted with the reason, and the human sees exactly why. Switch the caller to sre-lead to watch the same request succeed.`,
+        log: allowed
+          ? [L("", `<span class="k">request.sent</span>  ${domain}_assess  Bearer &lt;on-behalf-of JWT&gt;`), L("dim", `gateway rule  mcp.tool.target == "${domain}" && "domain:${domain}" in jwt.realm_access.roles  ✓`), L("dim", `agent check   aud contains ${agent}  ✓`), L("ok", `finding.returned  caller={ sub: ${name}, azp: maestro, act: maestro, delegated: true }`)]
+          : [L("dim", `assessment.not_consulted  [{ domain: "${domain}", reason: "delegation refused by Keycloak: Requested audience not available: ${agent}" }]`)] },
+    ];
+  }
+
+  function renderSteps() {
+    const S = STEPS();
+    stepsEl.innerHTML = S.map((s, i) => `<button data-i="${i}" class="${i === idx ? "current" : i < idx ? "done" : ""}">${i + 1}</button>`).join("");
+    stepsEl.querySelectorAll("button").forEach(b => b.addEventListener("click", () => goto(+b.dataset.i)));
+    bar.style.width = `${((idx + 1) / S.length) * 100}%`;
+  }
+  function show(i) {
+    const s = STEPS()[i];
+    nar.innerHTML = `<div class="who">${s.who}</div><h3>${i + 1}. ${s.title}</h3><p>${s.text}</p><div class="log">${s.log.join("")}</div>`;
+    idx = i; renderSteps();
+  }
+
+  // The delegation sequence on the topology engine.
+  async function runDelegation(on) {
+    const gold = "var(--warn)", obo = "var(--accent)", ok = "var(--ok)", bad = "var(--bad)";
+    const src = NODE[caller], allowed = ROLES[caller].includes(domain), agent = `${domain}-agent`;
+    t.reset();
+    ["apim", "cache", "messaging"].filter(d => !ROLES[caller].includes(d)).forEach(d => t.setState(`${d}-agent`, "off"));
+
+    on(0); t.setState(src, "active");
+    await t.flow(`${src}-keycloak`, { color: gold }); await t.flow(`${src}-keycloak`, { reverse: true, color: gold });
+    t.badge("keycloak", "caller's badge", "warn");
+    if (src === "ide") { await t.flow("ide-gateway", { color: gold }); await t.flow("maestro-gateway", { reverse: true, color: gold }); }
+    else await t.flow("console-maestro", { color: gold });
+
+    on(1); t.setState("maestro", "pulse active"); t.clearBadges();
+    t.badge("maestro", "holds caller's badge", "warn");
+    await sleep(900);
+
+    on(2); t.clearBadges();
+    await t.flow("maestro-keycloak", { color: gold, duration: 700 });
+    t.setState("keycloak", "active");
+    await sleep(500);
+    if (allowed) {
+      await t.flow("maestro-keycloak", { reverse: true, color: obo, duration: 700 });
+      t.badge("keycloak", `OBO badge · ${agent} · 5 min`, "accent");
+      t.setState("maestro", "active");
+    } else {
+      await t.flow("maestro-keycloak", { reverse: true, color: bad, cls: "hot-bad", duration: 700 });
+      t.setState("keycloak", "bad");
+      t.badge("keycloak", "refused: no domain:" + domain, "bad");
+      t.setState("maestro", "active");
+      on(3);
+      t.badge("maestro", `${domain}: not consulted`, "bad");
+      await sleep(1600);
+      return;
+    }
+    await sleep(700);
+
+    on(3); t.clearBadges();
+    t.setState("gateway", "active");
+    await t.flow("maestro-gateway", { color: obo });
+    t.badge("gateway", `role domain:${domain} ✓`, "gw");
+    t.setState(agent, "pulse active");
+    await t.flow(`gateway-${domain}`, { color: obo });
+    t.badge(agent, `aud ${agent} ✓`, "accent");
+    await sleep(900);
+    await t.flow(`gateway-${domain}`, { reverse: true, color: ok, cls: "hot-ok" });
+    t.setState(agent, "ok"); t.setState("keycloak", "idle");
+    await t.flow("maestro-gateway", { reverse: true, color: ok, cls: "hot-ok" });
+    t.clearBadges(); t.badge(agent, `finding for ${NAMES[caller]}`, "ok");
+    await sleep(1600);
+  }
+
+  async function animateTo(until) {
+    const my = ++run;
+    playing = until === Infinity;
+    await runDelegation((i) => {
+      if (my !== run || i > until) throw new Error("stop");
+      t.speed = i < until ? 0.2 : 1;
+      show(i);
+    }).catch(() => {});
+    t.speed = 1;
+    if (my === run && until === Infinity) { playing = false; document.getElementById("play").textContent = "▶ Play"; }
+  }
+  function goto(i) { animateTo(i); }
+  document.getElementById("next").addEventListener("click", () => goto(Math.min(idx + 1, 3)));
+  document.getElementById("prev").addEventListener("click", () => goto(Math.max(idx - 1, 0)));
+  document.getElementById("play").addEventListener("click", (e) => {
+    if (playing) { run++; playing = false; e.target.textContent = "▶ Play"; return; }
+    e.target.textContent = "■ Stop"; animateTo(Infinity);
+  });
+  document.querySelectorAll("[data-caller]").forEach(b => b.addEventListener("click", () => {
+    document.querySelectorAll("[data-caller]").forEach(x => x.classList.remove("on")); b.classList.add("on");
+    caller = b.dataset.caller; run++; playing = false; document.getElementById("play").textContent = "▶ Play"; goto(Math.max(idx, 0));
+  }));
+  document.querySelectorAll("[data-domain]").forEach(b => b.addEventListener("click", () => {
+    document.querySelectorAll("[data-domain]").forEach(x => x.classList.remove("on")); b.classList.add("on");
+    domain = b.dataset.domain; run++; playing = false; document.getElementById("play").textContent = "▶ Play"; goto(Math.max(idx, 0));
+  }));
+  goto(0);
+
+  // ---------------------------------------------------------------- real tokens
+  const CASES = {
+    "eng-cache": {
+      subject: { sub: "dd972d27-aba3-4ef4-adb9-d6c89e026fa7", preferred_username: "engineer", azp: "ide-cli", aud: ["maestro", "maestro-gateway"], realm_access: { roles: ["maestro:ask", "domain:apim", "domain:cache"] }, exp: "+28800 s" },
+      issued: { sub: "dd972d27-aba3-4ef4-adb9-d6c89e026fa7", preferred_username: "engineer", azp: "maestro", act: { client_id: "maestro" }, aud: "cache-agent", realm_access: { roles: ["domain:cache"] }, scope: "domain-cache email profile", exp: "+300 s" },
+      req: "audience=cache-agent         scope=domain-cache", note: "Same sub, narrower everything else. Maestro presents this to the gateway, which passes it to cache-agent." },
+    "eng-messaging": {
+      subject: { sub: "dd972d27-aba3-4ef4-adb9-d6c89e026fa7", preferred_username: "engineer", azp: "ide-cli", aud: ["maestro", "maestro-gateway"], realm_access: { roles: ["maestro:ask", "domain:apim", "domain:cache"] }, exp: "+28800 s" },
+      refused: { error: "invalid_request", error_description: "Requested audience not available: messaging-agent" },
+      req: "audience=messaging-agent     scope=domain-messaging", note: "engineer never held domain:messaging, so there is nothing to delegate. Maestro reports messaging as not consulted." },
+    "sre-messaging": {
+      subject: { sub: "6cc1446a-501e-421d-a319-1c2199d91df4", preferred_username: "sre-lead", azp: "ide-cli", aud: ["maestro", "maestro-gateway"], realm_access: { roles: ["maestro:ask", "domain:apim", "domain:cache", "domain:messaging"] }, exp: "+28800 s" },
+      issued: { sub: "6cc1446a-501e-421d-a319-1c2199d91df4", preferred_username: "sre-lead", azp: "maestro", act: { client_id: "maestro" }, aud: "messaging-agent", realm_access: { roles: ["domain:messaging"] }, scope: "email domain-messaging profile", exp: "+300 s" },
+      req: "audience=messaging-agent     scope=domain-messaging", note: "The same request that was refused for engineer succeeds for sre-lead, who holds the role." },
+    "console-apim": {
+      subject: { sub: "a6f0d810-3f5d-41b5-82e4-da1a02abbad0", preferred_username: "service-account-fleet-console", azp: "fleet-console", aud: ["maestro-gateway", "maestro"], realm_access: { roles: ["maestro:ask", "domain:apim", "domain:messaging", "domain:cache"] }, exp: "+28800 s" },
+      issued: { sub: "a6f0d810-3f5d-41b5-82e4-da1a02abbad0", preferred_username: "service-account-fleet-console", azp: "maestro", act: { client_id: "maestro" }, aud: "apim-agent", realm_access: { roles: ["domain:apim"] }, scope: "domain-apim email profile", exp: "+300 s" },
+      req: "audience=apim-agent          scope=domain-apim", note: "Non-human callers are delegated the same way: the console's service account is the subject, Maestro the carrier." },
+  };
+  const subj = document.getElementById("subject-claims"), issuedBox = document.getElementById("issued-box"), issuedNote = document.getElementById("issued-note"), reqEl = document.getElementById("exchange-request");
+  const esc = (s) => s.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+  function showCase(k) {
+    const c = CASES[k];
+    subj.textContent = JSON.stringify(c.subject, null, 2);
+    if (c.issued) issuedBox.innerHTML = `<pre style="margin:0"><code>${esc(JSON.stringify(c.issued, null, 2))}</code></pre>`;
+    else issuedBox.innerHTML = `<div class="refusal">HTTP 400\n${esc(JSON.stringify(c.refused, null, 2))}</div>`;
+    issuedNote.textContent = c.note;
+    reqEl.innerHTML = reqEl.innerHTML.replace(/audience=\S+\s+scope=\S+/, esc(c.req));
+    document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.case === k));
+  }
+  document.querySelectorAll("#tabs button").forEach(b => b.addEventListener("click", () => showCase(b.dataset.case)));
+  showCase("eng-cache");
+})();
+</script>
+</body>
+</html>

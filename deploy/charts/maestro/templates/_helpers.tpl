@@ -22,7 +22,8 @@ http://keycloak.maestro-identity:8080/realms/maestro
 http://{{ .root.Values.hostIp }}:{{ .port }}
 {{- end -}}
 
-{{/* Common env for every first-party Python service. Usage: {{ include "maestro.commonEnv" (dict "root" . "service" "cache-agent") | nindent 12 }} */}}
+{{/* Common env for every first-party Python service. Usage: {{ include "maestro.commonEnv" (dict "root" . "service" "cache-agent" "audience" "cache-agent,maestro-gateway") | nindent 12 }}
+     `audience` (optional) is the comma-separated list of `aud` values the service accepts (ADR-0015); default: the gateway audience only. */}}
 {{- define "maestro.commonEnv" -}}
 - name: SERVICE_NAME
   value: {{ .service | quote }}
@@ -41,7 +42,7 @@ http://{{ .root.Values.hostIp }}:{{ .port }}
 - name: OIDC_TOKEN_URL
   value: {{ include "maestro.tokenUrl" .root | quote }}
 - name: OIDC_AUDIENCE
-  value: maestro-gateway
+  value: {{ .audience | default "maestro-gateway" | quote }}
 - name: SKILLS_DIR
   value: /app/skills
 - name: PUBLIC_GRAFANA_URL
@@ -130,7 +131,9 @@ spec:
             - name: {{ .name }}
               value: {{ .value | quote }}
             {{- end }}
-            {{- include "maestro.commonEnv" (dict "root" .root "service" .name) | nindent 12 }}
+            {{- /* A domain agent accepts on-behalf-of tokens addressed to it (aud == its own client id, ADR-0015)
+                   and direct callers' tokens addressed to the gateway (ADR-0005). */}}
+            {{- include "maestro.commonEnv" (dict "root" .root "service" .name "audience" (printf "%s,maestro-gateway" .name)) | nindent 12 }}
             {{- include "maestro.llmEnv" (dict "root" .root "model" .root.Values.llm.agentModel "effort" .root.Values.llm.agentEffort) | nindent 12 }}
           {{- include "maestro.httpProbes" 8000 | nindent 10 }}
           resources: {{ toYaml .root.Values.resources.agent | nindent 12 }}

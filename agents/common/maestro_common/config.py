@@ -32,9 +32,13 @@ class Settings:
     oidc_issuer: str = field(default_factory=lambda: _env("OIDC_ISSUER"))
     oidc_jwks_url: str = field(default_factory=lambda: _env("OIDC_JWKS_URL"))
     oidc_token_url: str = field(default_factory=lambda: _env("OIDC_TOKEN_URL"))
+    # Comma-separated list of audiences this service accepts in `aud` (any one suffices). A domain
+    # agent accepts its own client id (on-behalf-of tokens) and the gateway audience (direct callers).
     oidc_audience: str = field(default_factory=lambda: _env("OIDC_AUDIENCE", "maestro-gateway"))
     oidc_client_id: str = field(default_factory=lambda: _env("OIDC_CLIENT_ID"))
     oidc_client_secret: str = field(default_factory=lambda: _env("OIDC_CLIENT_SECRET"))
+    # Maestro only: "exchange" (on-behalf-of tokens via RFC 8693, ADR-0015) or "passthrough" (ADR-0005).
+    maestro_auth_mode: str = field(default_factory=lambda: _env("MAESTRO_AUTH_MODE", "exchange"))
 
     # Skills
     skills_dir: str = field(default_factory=lambda: _env("SKILLS_DIR", "/app/skills"))
@@ -58,6 +62,10 @@ class Settings:
     public_keycloak_url: str = field(default_factory=lambda: _env("PUBLIC_KEYCLOAK_URL"))
     public_gateway_url: str = field(default_factory=lambda: _env("PUBLIC_GATEWAY_URL"))
     public_edge_url: str = field(default_factory=lambda: _env("PUBLIC_EDGE_URL"))
+
+    @property
+    def oidc_audiences(self) -> tuple[str, ...]:
+        return tuple(a.strip() for a in self.oidc_audience.split(",") if a.strip())
 
 
 settings = Settings()

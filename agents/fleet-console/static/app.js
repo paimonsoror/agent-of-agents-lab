@@ -22,7 +22,7 @@
 
   const KIND_CLASS = {
     "incident.raised": "c-incident", "question.asked": "c-incident", "error": "c-error",
-    "token.issued": "c-identity",
+    "token.issued": "c-identity", "token.exchanged": "c-identity", "token.refused": "c-error",
     "request.sent": "c-request", "request.received": "c-request", "tools.discovered": "c-request",
     "skills.loaded": "c-skills",
     "evidence.gathered": "c-evidence", "llm.turn": "c-evidence",
@@ -218,12 +218,20 @@
       case "token.issued":
         if (state.nodes[src]) setStatus(src, "JWT issued · Keycloak", "amber");
         break;
+      case "token.exchanged":
+        setStatus("maestro", `On-behalf-of badge · ${d.target || "agent"}`, "amber");
+        break;
+      case "token.refused":
+        setStatus("maestro", `Delegation refused · ${d.target || "agent"}`, "red");
+        if (d.target && state.nodes[`${d.target}-agent`]) setStatus(`${d.target}-agent`, "delegation refused", "grey", "dimmed");
+        break;
       case "request.sent":
         if (src === "maestro") setStatus("maestro", "Federating via gateway…", "amber");
         break;
       case "request.received":
         if (state.nodes[src]) {
-          const who = d.caller && (d.caller.username || d.caller.azp) ? ` · ${d.caller.username || d.caller.azp}` : "";
+          const c = d.caller || {};
+          const who = c.username || c.azp ? ` · ${c.delegated ? "for " : ""}${c.username || c.azp}` : "";
           setStatus(src, `Request received${who}`, "amber");
         }
         break;
@@ -518,11 +526,21 @@
   }
 
   // ---------------------------------------------------------------- intake
+  // Delegation mode for this request (ADR-0015); "" lets Maestro use its configured default.
+  function authMode() { const el = $("auth-mode"); return el ? el.value : ""; }
+
+  async function tryIdentity(user, domain) {
+    const r = await fetch("/api/identity/try", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user, domain }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || `identity sandbox failed (${r.status})`);
+    return j;
+  }
+
   async function raiseIncident() {
     const btn = $("raise-incident"); btn.disabled = true;
     try {
       const r = await fetch("/api/incident", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: $("inc-title").value, service: $("inc-service").value, description: $("inc-desc").value }) });
+        body: JSON.stringify({ title: $("inc-title").value, service: $("inc-service").value, description: $("inc-desc").value, auth_mode: authMode() }) });
       const j = await r.json();
       if (j.trace_id) startTrace(j.trace_id);
     } catch (e) { alertBanner("Could not reach the console API"); }
@@ -534,7 +552,7 @@
     if (!q) return;
     const btn = $("ask-btn"); btn.disabled = true;
     try {
-      const r = await fetch("/api/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: q }) });
+      const r = await fetch("/api/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: q, auth_mode: authMode() }) });
       const j = await r.json();
       if (j.trace_id) startTrace(j.trace_id);
     } catch (e) { alertBanner("Could not reach the console API"); }
@@ -562,7 +580,7 @@
     if (key === "keycloak" && creds) {
       const users = (creds.demo_users || []).map((u) => `<li><code>${esc(u.username)}</code> / <code>${esc(u.password)}</code>${copyButton(u.password)}<div class="cred-roles">${(u.roles || []).map(esc).join(" · ")}</div></li>`).join("");
       if (users) rows += `<div class="cred-k cred-head">Demo users</div><ul class="cred-users">${users}</ul>`;
-      const sa = (creds.service_accounts || []).map((s) => `<li><code>${esc(s.client_id)}</code> · secret <code>${esc(s.secret)}</code>${copyButton(s.secret)}</li>`).join("");
+      const sa = (creds.service_accounts || []).map((s) => `<li><code>${esc(s.client_id)}</code> · secret <code>${esc(s.secret)}</code>${copyButton(s.secret)}${s.note ? `<div class="cred-roles">${esc(s.note)}</div>` : ""}</li>`).join("");
       if (sa) rows += `<div class="cred-k cred-head">Service accounts</div><ul class="cred-users">${sa}</ul>`;
       rows += `<div class="cred-note">Fetch a token: <code>make token-engineer</code>${copyButton("make token-engineer")} · <code>make token-sre-lead</code></div>`;
     }
@@ -618,6 +636,8 @@
       replaying: () => player.active,
       node: (id) => ((state.topology && state.topology.nodes) || []).find((n) => n.id === id) || null,
       credentials: () => (state.topology && state.topology.credentials) || null,
+      identity: () => (state.topology && state.topology.identity) || null,
+      tryIdentity,
       fmtTime,
       select: selectNode,
     });

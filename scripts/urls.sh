@@ -17,6 +17,7 @@ cat <<EOF
 
   Human identities     engineer / engineer (no messaging role)   sre-lead / sre-lead (all roles)
   IDE token            make token-engineer   |   make token-sre-lead
+  On-behalf-of demo    make obo-demo USER_ID=engineer DOMAIN=messaging   (ADR-0015)
   Scenarios            make scenario-apim-bad-route | scenario-cache-pressure | scenario-messaging-lag | scenario-clear
 
 EOF

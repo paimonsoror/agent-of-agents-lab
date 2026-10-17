@@ -33,6 +33,7 @@ architecture, a real incident end to end, the fault scenarios and the console (s
 | --- | --- |
 | Federated, domain-scoped cognition | Each agent is driven by a `SKILL.md` bundle ([agentskills.io](https://agentskills.io)) for its domain plus a shared Prometheus skill |
 | Agent-to-agent transport with real identity | MCP over an open-source AI gateway ([agentgateway](https://agentgateway.dev)); every hop carries a Keycloak-issued JWT; the gateway filters tools by the caller's roles |
+| Agents act *on behalf of* a person, with less than that person's rights | Maestro exchanges the caller's token (RFC 8693) for a per-agent, five-minute token that names the person and Maestro as carrier; Keycloak refuses what the caller lacks. Explainer: [docs/identity-on-behalf-of.md](docs/identity-on-behalf-of.md), [ADR-0015](docs/adr/0015-on-behalf-of-token-exchange.md) |
 | A2A as the north star | The same gateway speaks A2A; the migration is a routing-policy change, documented in [ADR-0004](docs/adr/0004-mcp-with-jwt-today-a2a-north-star.md) |
 | Shared monitoring every domain already has | Prometheus + Grafana; all platforms export natively; agents query PromQL and deep-link to dashboards |
 | Executive-grade visibility | The Fleet Console animates each request as it flows through the ecosystem, live |
@@ -71,6 +72,7 @@ stack is healthy. `make scenario-<name>` injects a fault for the agents to find
 | `docs/contracts.md` | Every name, port, environment variable and JSON schema the components agree on |
 | `docs/adr/` | Architecture Decision Records — the *why* behind every choice, for humans and agents |
 | `docs/demo-script.md` | The executive walkthrough, minute by minute |
+| `docs/identity-on-behalf-of.md` | Plain-language explainer of on-behalf-of tokens: why agents must not hold the caller's rights, and how the lab does it |
 | `docs/runbook.md` | Operating it: secrets, URLs, troubleshooting, teardown |
 | `skills/` | The `SKILL.md` bundles that give each agent its domain cognition |
 | `agents/` | Python services: the domain agents, Maestro, the Fleet Console, the sample member portal |

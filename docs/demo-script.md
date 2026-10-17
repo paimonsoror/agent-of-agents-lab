@@ -44,11 +44,15 @@ as it happens:
 2. **Maestro receives** the incident, loads its orchestration skill.
 3. **Tools discovered** — Maestro asks the gateway what it may call; the gateway answers
    with the three domain agents because the console's identity holds all three roles.
-4. **Fan-out** — three edges light up at once. Each agent: *skills loaded* (the domain's
+4. **One badge per agent** — three short hops from Maestro down to Keycloak: for each
+   agent, Maestro gets an *on-behalf-of* token that still names the caller but opens only
+   that agent, for five minutes, stamped "carried by Maestro". Click the **Keycloak** box
+   to show the two badges side by side.
+5. **Fan-out** — three edges light up at once. Each agent: *skills loaded* (the domain's
    `SKILL.md` — written by that domain's team), then *evidence gathered* against its
    platform and against Prometheus.
-5. **Findings returned** — apim implicated 0.8+, cache and messaging cleared.
-6. **Assessment posted** — one verdict, one next step: "Roll back CHG0123."
+6. **Findings returned** — apim implicated 0.8+, cache and messaging cleared.
+7. **Assessment posted** — one verdict, one next step: "Roll back CHG0123."
 
 Open the assessment card. Read the next step aloud. Click the apim evidence link.
 
@@ -66,6 +70,12 @@ Point at the assessment: `not_consulted: messaging — caller lacks role domain:
 Say: "The engineer's own identity travelled all the way down. The gateway never showed
 them an agent they aren't entitled to. Same agents, same tools, governed per person."
 
+Optional, if identity is the audience's concern (1 min): press **Identity** in the
+console's top bar, choose `engineer` and `messaging-agent`, press *Ask Keycloak for a
+badge*. Keycloak refuses, live. Switch to `cache-agent`: a five-minute badge for one
+door, carried by Maestro. Say: "The agent never holds the person's keys. It holds a
+badge for one door, for five minutes, that says who it is working for."
+
 ## 8:00 — Clear it (30 s)
 
 Clear the scenario in the console. Optionally re-ask; watch apim come back cleared with
@@ -74,8 +84,12 @@ Clear the scenario in the console. Optionally re-ask; watch apim come back clear
 ## 8:30 — Talking points for Q&A (1.5 min)
 
 - **Identity.** One IdP (Keycloak standing in for Entra/Okta). Every agent and service is
-  a non-human identity. Tokens are propagated, never re-minted, so Maestro cannot escalate
-  on anyone's behalf. The gateway enforces tool-level RBAC from JWT roles. ADR-0005.
+  a non-human identity. Agents never hold the caller's credentials: Maestro exchanges the
+  caller's token for a per-agent, five-minute, on-behalf-of token (RFC 8693, the same
+  pattern as Entra's OBO flow), so an agent's permissions are the intersection of the
+  caller's rights and that agent's remit, and Keycloak refuses what the caller lacks.
+  The gateway enforces tool-level RBAC from JWT roles. ADR-0005, ADR-0015,
+  `docs/identity-on-behalf-of.md`.
 - **Why MCP now, A2A later.** MCP keeps identity to one place while the NHI story
   matures. The gateway already speaks A2A; migration is a policy change and one adapter
   file. ADR-0004.

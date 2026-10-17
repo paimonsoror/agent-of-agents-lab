@@ -47,11 +47,18 @@ separate platform to deploy — the cluster itself is the platform.
 ## 4. Wire identity and the gateway
 
 - `deploy/keycloak/realm.json`: add realm role `domain:compute`; grant it to
-  `fleet-console`, `sre-lead`, and whichever humans should see it.
+  `fleet-console`, `sre-lead`, and whichever humans should see it. For on-behalf-of
+  delegation (ADR-0015) also add: a bearer-only client `compute-agent`; a client scope
+  `domain-compute` with an audience mapper for `compute-agent`; a `scopeMappings` entry
+  `{ "clientScope": "domain-compute", "roles": ["domain:compute"] }`; and `domain-compute`
+  in the `maestro` client's `optionalClientScopes`. Maestro derives the audience and scope
+  names from the domain id, so nothing in Maestro changes.
 - the fleet gateway config (ConfigMap `fleet-gateway-config`, rendered from
-  `deploy/charts/maestro/templates/`): add target
-  `compute → http://compute-agent.domain-compute:8000/mcp` to the `/agents/mcp` backend and
-  the rule `mcp.tool.target == "compute" && "domain:compute" in jwt.realm_access.roles`.
+  `deploy/charts/maestro/templates/gateway/fleet-gateway.yaml`): add target
+  `compute → http://compute-agent.domain-compute:8000/mcp` to the `/agents/mcp` backend,
+  the rule `mcp.tool.target == "compute" && "domain:compute" in jwt.realm_access.roles`, and
+  `compute-agent` to the route's `jwtAuth.audiences`. The agent Deployment gets
+  `OIDC_AUDIENCE=compute-agent,maestro-gateway` automatically from the chart helper.
 - `deploy/grafana/domain-compute.json`: the dashboard with the panel ids your skill cites.
 
 Maestro discovers `compute_assess` automatically on the next request; its orchestration
@@ -75,6 +82,7 @@ list. Then: `docs/adr/0014-compute-domain.md`, `make reset && make smoke`, and e
 - [ ] `SKILL.md` validates (`scripts/validate-skills.py`)
 - [ ] agent answers `health()` through the gateway
 - [ ] `engineer` without the role does not see `compute_*` tools
+- [ ] `make obo-demo USER_ID=sre-lead DOMAIN=compute` issues a token with `aud: compute-agent` and only `domain:compute`
 - [ ] dashboard uid/panels match the skill
 - [ ] scenario applies and clears idempotently
 - [ ] ADR written; `docs/contracts.md` updated (ports, env, job name)

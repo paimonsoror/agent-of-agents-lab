@@ -6,6 +6,7 @@
     ["index.html", "Overview"],
     ["how-it-works.html", "How it works"],
     ["architecture.html", "Architecture"],
+    ["identity.html", "Identity"],
     ["cognition.html", "Cognition"],
     ["scenarios.html", "Scenarios"],
     ["console.html", "Fleet Console"],
